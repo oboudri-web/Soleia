@@ -17,7 +17,6 @@ import Mapbox, {
   ShapeSource,
   FillLayer,
   LineLayer,
-  FillExtrusionLayer,
   StyleURL,
   UserLocation,
 } from '@rnmapbox/maps';
@@ -108,15 +107,14 @@ export default function SunMap({
 }: Props) {
   const { isDark } = useTheme();
   const darkMap = forceDark ?? isDark;
-  // Style Mapbox Standard v12 — contient nativement :
-  //   • bâtiments 3D extrudés (couche `building` avec fill-extrusion)
-  //   • sky atmosphérique
-  //   • lighting & ombres ambiantes
-  //   • route hierarchy à toutes les échelles
-  // Pré-tesselé + caché au niveau tile = ~0% GPU custom de notre côté.
-  const styleURL = darkMap
-    ? 'mapbox://styles/mapbox/standard'
-    : 'mapbox://styles/mapbox/standard';
+  // Style Mapbox Streets v12 — toujours clair, stable, contient nativement :
+  //   • bâtiments 3D extrudés (couche `building` avec fill-extrusion à zoom ≥15)
+  //   • routes hierarchiques propres
+  //   • POI labels intégrés
+  // Pas de lightPreset, pas de setStyleImportConfigProperty → zéro surface de
+  // bug iOS (le black screen venait de là).
+  const styleURL = 'mapbox://styles/mapbox/streets-v12';
+  console.log(`[mapbox.style] using fixed styleURL='${styleURL}' (darkMap=${darkMap}, ignored)`);
 
   const mapRef = useRef<MapView>(null);
   const cameraRef = useRef<Camera>(null);
@@ -155,90 +153,11 @@ export default function SunMap({
     }
   }, [shadowPolygons]);
 
-  // ─── Mapbox Standard v12 — directional light driven by slider time ─────────
-  // Le style `mapbox/standard` v12 cast de vraies ombres GPU sur les bâtiments
-  // 3D selon un `lightPreset`. On bind la prop `currentMinutes` (du slider) à
-  // ce preset avec un debounce 300ms pour ne pas saturer le shader sur drag.
-  // Mapping :
-  //   • <  6h  → night
-  //   •  6–9h  → dawn
-  //   •  9–18h → day
-  //   • 18–21h → dusk
-  //   • > 21h  → night
-  function pickLightPreset(min: number): 'dawn' | 'day' | 'dusk' | 'night' {
-    const h = min / 60;
-    if (h < 6) return 'night';
-    if (h < 9) return 'dawn';
-    if (h < 18) return 'day';
-    if (h < 21) return 'dusk';
-    return 'night';
-  }
-  const [lightPreset, setLightPreset] = useState<'dawn' | 'day' | 'dusk' | 'night'>(
-    pickLightPreset(currentMinutes ?? new Date().getHours() * 60 + new Date().getMinutes()),
-  );
-  // Tracks when the basemap style import is actually loaded — only after this
-  // can `setStyleImportConfigProperty('basemap', ...)` actually take effect on
-  // iOS. Calling it earlier silently fails and the default `day` preset stays
-  // — which on some iOS builds defaults to `night` if the device is in dark
-  // mode at the OS level.
-  const [styleLoaded, setStyleLoaded] = useState(false);
-
-  // Helper: imperatively apply a light preset on the basemap import.
-  // Tries multiple known method names across @rnmapbox/maps 10.x versions.
-  const applyLightPreset = useCallback((target: 'dawn' | 'day' | 'dusk' | 'night') => {
-    const ref: any = mapRef.current;
-    if (!ref) {
-      console.log(`[mapbox.light] applyLightPreset(${target}) — mapRef.current is null, skipping`);
-      return false;
-    }
-    const methods = [
-      'setStyleImportConfigProperty', // 10.1+
-      'setMapStyleImportConfigProperty', // alt naming on some forks
-    ];
-    for (const m of methods) {
-      if (typeof ref[m] === 'function') {
-        try {
-          ref[m]('basemap', 'lightPreset', target);
-          console.log(`[mapbox.light] ✅ ${m}('basemap','lightPreset','${target}')`);
-          return true;
-        } catch (e) {
-          console.warn(`[mapbox.light] ${m} threw:`, e);
-        }
-      }
-    }
-    console.warn(
-      `[mapbox.light] ❌ no setStyleImportConfigProperty method found on mapRef. Available keys: ${Object.keys(ref).slice(0, 12).join(',')}`,
-    );
-    return false;
-  }, []);
-
-  // 1) When style finishes loading, immediately push the *current* preset.
-  //    This is the moment the API actually takes effect.
-  useEffect(() => {
-    if (!styleLoaded) return;
-    console.log(`[mapbox.light] style loaded → forcing initial preset='${lightPreset}'`);
-    applyLightPreset(lightPreset);
-  }, [styleLoaded, lightPreset, applyLightPreset]);
-
-  // 2) When the slider moves, recompute target + apply (debounced 300ms).
-  //    We *always* call the API even if target===lightPreset, in case the
-  //    initial style load undid it.
-  useEffect(() => {
-    if (currentMinutes == null) return;
-    const target = pickLightPreset(currentMinutes);
-    const t = setTimeout(() => {
-      if (target !== lightPreset) {
-        setLightPreset(target);
-        console.log(
-          `[mapbox.light] slider preset → ${target} (min=${Math.round(currentMinutes)})`,
-        );
-      }
-      if (styleLoaded) {
-        applyLightPreset(target);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [currentMinutes, lightPreset, styleLoaded, applyLightPreset]);
+  // Note: `currentMinutes` prop est conservée pour compatibilité mais n'est
+  // plus utilisée ici. Le système lightPreset (dawn/day/dusk/night) a été
+  // entièrement supprimé pour éliminer les black screens iOS. Les ombres
+  // calculées par notre backend (Suncalc + Douglas-Peucker) restent affichées
+  // si `enableLegacyShadows={true}` est passé en prop (sinon carte propre).
 
   // Supercluster pour les markers
   const clusterIndex = useMemo(() => {
@@ -318,9 +237,6 @@ export default function SunMap({
         attributionEnabled={false}
         scaleBarEnabled={false}
         compassEnabled={false}
-        // Charge GPU divisée par ~3 grâce au style `standard` (3D buildings
-        // natifs et caches au niveau tile). On peut donc rétablir pitch+rotate
-        // pour le feeling 3D recherché.
         scrollEnabled
         zoomEnabled
         pitchEnabled
@@ -328,7 +244,6 @@ export default function SunMap({
         onCameraChanged={onCameraChanged}
         onDidFinishLoadingStyle={() => {
           console.log(`[mapbox.style] ✅ style loaded — URL='${styleURL}'`);
-          setStyleLoaded(true);
         }}
         onDidFinishLoadingMap={() => {
           console.log('[mapbox.map] ✅ map fully loaded (tiles + style)');
@@ -349,14 +264,14 @@ export default function SunMap({
           animationDuration={1000}
         />
 
-        {/* Bâtiments 3D : fournis nativement par le style `mapbox/standard`
-            (couche `building` avec fill-extrusion intégrée + sky atmosphérique
-            + lighting). Aucun layer custom ici → moins de code, moins de
-            surface de bug, GPU heureux.
-            
-            Les ombres GPU réelles sur les bâtiments 3D sont pilotées par
-            `lightPreset` (voir useEffect plus haut) — pas de polygone à
-            transmettre, le shader Mapbox les calcule en temps réel. */}
+        {/* Bâtiments 3D : fournis nativement par le style `mapbox/streets-v12`
+            (couche `building` avec fill-extrusion à zoom ≥ 15). Aucun layer
+            custom ici → moins de code, moins de surface de bug, GPU heureux.
+
+            Pas de lightPreset, pas d'ombres GPU dynamiques — la carte reste
+            toujours claire et stable. Les ombres calculées par notre backend
+            (Suncalc + Douglas-Peucker) sont superposées si
+            `enableLegacyShadows={true}` ci-dessous. */}
 
         {/* Ombres legacy OSM — désactivées par défaut, gardées en fallback */}
         {enableLegacyShadows && shadowFeatureCollection.features.length > 0 && (
