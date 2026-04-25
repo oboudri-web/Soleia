@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soleia.app",
-      "buildNumber": "4",
+      "buildNumber": "5",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Trouver les terrasses au soleil près de vous",
         "NSCameraUsageDescription": "Prendre une photo pour valider cette terrasse",
@@ -70,7 +70,7 @@
         "@rnmapbox/maps",
         {
           "RNMapboxMapsImpl": "mapbox",
-          "RNMapboxMapsDownloadToken": "REPLACE_WITH_MAPBOX_SECRET_TOKEN"
+          "RNMapboxMapsDownloadToken": "sk.eyJ1Ijoib2lsaWQiLCJhIjoiY21vY3c5Znc0MDNmaDJycXZtcjAyanM0bCJ9.Zb9lgnbwEhpAkqWepxDmkw"
         }
       ],
       [
