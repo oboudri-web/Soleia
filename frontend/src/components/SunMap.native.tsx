@@ -17,6 +17,7 @@ import Mapbox, {
   ShapeSource,
   FillLayer,
   LineLayer,
+  CircleLayer,
   StyleURL,
   UserLocation,
 } from '@rnmapbox/maps';
@@ -159,6 +160,40 @@ export default function SunMap({
   // calculées par notre backend (Suncalc + Douglas-Peucker) restent affichées
   // si `enableLegacyShadows={true}` est passé en prop (sinon carte propre).
 
+  // Diagnostic log — count des terraces reçues
+  useEffect(() => {
+    console.log(
+      `[mapbox.markers] received ${terraces.length} terraces from parent — first=${terraces[0] ? `${terraces[0].name}@${terraces[0].lat},${terraces[0].lng}` : 'none'}`,
+    );
+  }, [terraces.length]);
+
+  // FeatureCollection de TOUS les terraces — utilisé par le CircleLayer natif
+  // (rendu garanti, ne dépend pas de MarkerView qui peut bugger sur iOS).
+  const terracesFeatureCollection = useMemo(
+    () => ({
+      type: 'FeatureCollection' as const,
+      features: terraces
+        .filter(
+          (t) =>
+            typeof t.lat === 'number' &&
+            typeof t.lng === 'number' &&
+            !isNaN(t.lat) &&
+            !isNaN(t.lng),
+        )
+        .map((t) => ({
+          type: 'Feature' as const,
+          id: t.id,
+          geometry: { type: 'Point' as const, coordinates: [t.lng, t.lat] },
+          properties: {
+            id: t.id,
+            sunny: t.sun_status === 'sunny' ? 1 : 0,
+            selected: selectedId === t.id ? 1 : 0,
+          },
+        })),
+    }),
+    [terraces, selectedId],
+  );
+
   // Supercluster pour les markers
   const clusterIndex = useMemo(() => {
     const idx = new Supercluster({ radius: 50, maxZoom: 16, minPoints: 3 });
@@ -293,6 +328,51 @@ export default function SunMap({
             androidRenderMode="normal"
             showsUserHeadingIndicator
           />
+        )}
+
+        {/* Fallback CircleLayer natif Mapbox — rend TOUJOURS un cercle pour
+            chaque terrasse, même si MarkerView a un bug d'affichage iOS sur
+            @rnmapbox/maps 10.x. Les couleurs reflètent le statut soleil/ombre.
+            Les MarkerView custom (riches) sont superposés par-dessus. */}
+        {terracesFeatureCollection.features.length > 0 && (
+          <ShapeSource
+            id="soleia-terraces-points"
+            shape={terracesFeatureCollection as any}
+            onPress={(e: any) => {
+              const f = e?.features?.[0];
+              const id = f?.properties?.id || f?.id;
+              const t = terraces.find((x) => x.id === id);
+              if (t) onMarkerPress(t);
+            }}
+          >
+            {/* Halo extérieur pour la terrasse sélectionnée */}
+            <CircleLayer
+              id="soleia-terraces-halo"
+              filter={['==', ['get', 'selected'], 1]}
+              style={{
+                circleRadius: 18,
+                circleColor: '#F5A623',
+                circleOpacity: 0.25,
+                circleStrokeWidth: 0,
+              }}
+            />
+            {/* Cercle principal — orange si au soleil, gris si à l'ombre */}
+            <CircleLayer
+              id="soleia-terraces-circles"
+              style={{
+                circleRadius: ['case', ['==', ['get', 'selected'], 1], 10, 7],
+                circleColor: [
+                  'case',
+                  ['==', ['get', 'sunny'], 1],
+                  '#F5A623',
+                  '#9E9E9E',
+                ],
+                circleStrokeWidth: 2,
+                circleStrokeColor: '#FFFFFF',
+                circleOpacity: 0.95,
+              }}
+            />
+          </ShapeSource>
         )}
 
         {/* Clusters + markers individuels */}

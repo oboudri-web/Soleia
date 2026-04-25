@@ -276,7 +276,7 @@ export default function MapScreen() {
   // Flag pour réactiver les ombres OSM legacy si jamais Mapbox vector tiles
   // ratent des bâtiments (mettre à `true` + repasser `enableLegacyShadows={true}`
   // sur <SunMap/> pour voir les polygones gris en overlay).
-  const ENABLE_LEGACY_SHADOWS = false;
+  const ENABLE_LEGACY_SHADOWS = true;
   const shadowFetchCtrlRef = useRef<AbortController | null>(null);
 
   // Fetch shadow overlay whenever bbox or at_time changes.
@@ -407,6 +407,9 @@ export default function MapScreen() {
         api.listTerraces(params),
         api.getWeather(city).catch(() => null),
       ]);
+      console.log(
+        `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — city=${city} bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
+      );
       setTerraces(terracesRes.terraces);
       setWeather(weatherRes);
 
@@ -514,7 +517,7 @@ export default function MapScreen() {
           forceDark={mapIsDark}
           onRegionChange={onMapRegionChange}
           shadowPolygons={shadowPolygons}
-          enableLegacyShadows={false}
+          enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
         />
       </View>
