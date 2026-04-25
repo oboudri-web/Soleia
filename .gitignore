@@ -56,3 +56,12 @@ test_reports/
 
 # Supervisor logs
 *.pid
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
