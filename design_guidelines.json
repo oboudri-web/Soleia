@@ -1,0 +1,146 @@
+{
+  "theme": "Light mode default, Dark mode supported",
+  "archetype": "Organic & Earthy / Premium Lifestyle",
+  "colors": {
+    "light": {
+      "primary": "#F5A623",
+      "background": "#FFFFFF",
+      "surface": "#FFFFFF",
+      "surfaceSecondary": "#F7F5F0",
+      "text": "#000000",
+      "textSecondary": "#666666",
+      "border": "#EAEAEA",
+      "markerSunny": "#F5A623",
+      "markerSoon": "#FF8C00",
+      "markerShade": "#999999",
+      "overlay": "#000000"
+    },
+    "dark": {
+      "primary": "#F5A623",
+      "background": "#000000",
+      "surface": "#1C1C1E",
+      "surfaceSecondary": "#2C2C2E",
+      "text": "#FFFFFF",
+      "textSecondary": "#A0A0A0",
+      "border": "#333333",
+      "markerSunny": "#F5A623",
+      "markerSoon": "#FF8C00",
+      "markerShade": "#666666",
+      "overlay": "#000000"
+    }
+  },
+  "typography": {
+    "fontFamily": "System",
+    "sizes": {
+      "h1": 34,
+      "h2": 28,
+      "h3": 22,
+      "h4": 18,
+      "body": 16,
+      "small": 14,
+      "caption": 12
+    },
+    "weights": {
+      "bold": "700",
+      "medium": "500",
+      "regular": "400",
+      "light": "300"
+    }
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 32,
+    "xxl": 48
+  },
+  "components_guidelines": {
+    "View": {
+      "container": {
+        "flex": 1,
+        "backgroundColor": "background"
+      },
+      "card": {
+        "backgroundColor": "surface",
+        "borderRadius": 24,
+        "padding": 16,
+        "shadowColor": "#000000",
+        "shadowOffset": { "width": 0, "height": 4 },
+        "shadowOpacity": 0.05,
+        "shadowRadius": 16,
+        "elevation": 4
+      }
+    },
+    "Text": {
+      "title": {
+        "fontSize": 34,
+        "fontWeight": "700",
+        "color": "text"
+      },
+      "body": {
+        "fontSize": 16,
+        "fontWeight": "300",
+        "color": "textSecondary"
+      }
+    },
+    "TouchableOpacity": {
+      "primaryButton": {
+        "height": 56,
+        "borderRadius": 28,
+        "backgroundColor": "#000000",
+        "justifyContent": "center",
+        "alignItems": "center"
+      },
+      "primaryButtonText": {
+        "fontSize": 16,
+        "fontWeight": "700",
+        "color": "#FFFFFF"
+      }
+    },
+    "BottomSheet": {
+      "borderTopLeftRadius": 32,
+      "borderTopRightRadius": 32,
+      "backgroundColor": "surface",
+      "shadowColor": "#000000",
+      "shadowOffset": { "width": 0, "height": -4 },
+      "shadowOpacity": 0.1,
+      "shadowRadius": 20,
+      "elevation": 10,
+      "paddingTop": 12,
+      "paddingHorizontal": 24
+    },
+    "MapMarker": {
+      "size": 40,
+      "borderRadius": 20
+    }
+  },
+  "animations": {
+    "pulsingMarker": {
+      "description": "Use Animated API. Scale from 1 to 1.3, opacity from 0.8 to 0, looped infinitely. Base marker stays solid.",
+      "duration": 1500,
+      "easing": "ease-out"
+    },
+    "bottomSheet": {
+      "description": "Spring animation for smooth entry",
+      "damping": 20,
+      "stiffness": 200
+    }
+  },
+  "image_urls": [
+    {
+      "url": "https://images.unsplash.com/photo-1773680176537-47c18193906c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwyfHxzdW5ueSUyMGNhZmUlMjB0ZXJyYWNlfGVufDB8fHx8MTc3Njg4OTQ3MXww&ixlib=rb-4.1.0&q=85",
+      "category": "terrace_preview",
+      "description": "Outdoor seating with umbrellas and cars passing by"
+    },
+    {
+      "url": "https://images.unsplash.com/photo-1775823291194-a2b5ff4488e9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxzdW5ueSUyMGNhZmUlMjB0ZXJyYWNlfGVufDB8fHx8MTc3Njg4OTQ3MXww&ixlib=rb-4.1.0&q=85",
+      "category": "onboarding_bg",
+      "description": "Empty outdoor cafe seating area with tables and chairs"
+    }
+  ],
+  "accessibility_and_testing": {
+    "testIdStrategy": "All interactive elements MUST have a testID property (e.g., testID='y-aller-button')."
+  },
+  "instructions_to_main_agent": "Implement a React Native Expo app. Follow standard mobile UI/UX principles with native components (SafeAreaView, View, Text, ScrollView, TouchableOpacity). Use React Native StyleSheet API. NO string values for sizes, ONLY integers (e.g. fontSize: 16, not '16px'). All colors MUST be hex format as requested. Build three main flows: Onboarding (3 steps), Map with pulsing markers using react-native-maps, and Bottom Sheet terrace details. Add a timeline slider for sun tracking. For Dark Mode, use React Native's Appearance API or a Theme Provider to switch between the provided light and dark hex palettes."
+}

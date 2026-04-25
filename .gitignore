@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+.expo/
+.expo-shared/
+**/.expo/
+**/.expo-shared/
+
+# Caches
+.metro-cache/
+**/.metro-cache/
+.cache/
+**/.cache/
+.next/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files (contain secrets)
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test reports / temp
+test_reports/
+.pytest_cache/
+**/.pytest_cache/
+
+# Supervisor logs
+*.pid
