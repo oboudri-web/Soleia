@@ -176,27 +176,69 @@ export default function SunMap({
   const [lightPreset, setLightPreset] = useState<'dawn' | 'day' | 'dusk' | 'night'>(
     pickLightPreset(currentMinutes ?? new Date().getHours() * 60 + new Date().getMinutes()),
   );
+  // Tracks when the basemap style import is actually loaded — only after this
+  // can `setStyleImportConfigProperty('basemap', ...)` actually take effect on
+  // iOS. Calling it earlier silently fails and the default `day` preset stays
+  // — which on some iOS builds defaults to `night` if the device is in dark
+  // mode at the OS level.
+  const [styleLoaded, setStyleLoaded] = useState(false);
+
+  // Helper: imperatively apply a light preset on the basemap import.
+  // Tries multiple known method names across @rnmapbox/maps 10.x versions.
+  const applyLightPreset = useCallback((target: 'dawn' | 'day' | 'dusk' | 'night') => {
+    const ref: any = mapRef.current;
+    if (!ref) {
+      console.log(`[mapbox.light] applyLightPreset(${target}) — mapRef.current is null, skipping`);
+      return false;
+    }
+    const methods = [
+      'setStyleImportConfigProperty', // 10.1+
+      'setMapStyleImportConfigProperty', // alt naming on some forks
+    ];
+    for (const m of methods) {
+      if (typeof ref[m] === 'function') {
+        try {
+          ref[m]('basemap', 'lightPreset', target);
+          console.log(`[mapbox.light] ✅ ${m}('basemap','lightPreset','${target}')`);
+          return true;
+        } catch (e) {
+          console.warn(`[mapbox.light] ${m} threw:`, e);
+        }
+      }
+    }
+    console.warn(
+      `[mapbox.light] ❌ no setStyleImportConfigProperty method found on mapRef. Available keys: ${Object.keys(ref).slice(0, 12).join(',')}`,
+    );
+    return false;
+  }, []);
+
+  // 1) When style finishes loading, immediately push the *current* preset.
+  //    This is the moment the API actually takes effect.
+  useEffect(() => {
+    if (!styleLoaded) return;
+    console.log(`[mapbox.light] style loaded → forcing initial preset='${lightPreset}'`);
+    applyLightPreset(lightPreset);
+  }, [styleLoaded, lightPreset, applyLightPreset]);
+
+  // 2) When the slider moves, recompute target + apply (debounced 300ms).
+  //    We *always* call the API even if target===lightPreset, in case the
+  //    initial style load undid it.
   useEffect(() => {
     if (currentMinutes == null) return;
     const target = pickLightPreset(currentMinutes);
     const t = setTimeout(() => {
       if (target !== lightPreset) {
         setLightPreset(target);
-        console.log(`[mapbox.light] preset → ${target} (min=${Math.round(currentMinutes)})`);
+        console.log(
+          `[mapbox.light] slider preset → ${target} (min=${Math.round(currentMinutes)})`,
+        );
       }
-      // Always try imperative API (recently added in @rnmapbox/maps 10.x).
-      // Wrapped in try because not all SDK versions ship the method.
-      try {
-        const ref: any = mapRef.current;
-        if (ref && typeof ref.setStyleImportConfigProperty === 'function') {
-          ref.setStyleImportConfigProperty('basemap', 'lightPreset', target);
-        }
-      } catch (e) {
-        console.warn('[mapbox.light] setStyleImportConfigProperty failed:', e);
+      if (styleLoaded) {
+        applyLightPreset(target);
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [currentMinutes, lightPreset]);
+  }, [currentMinutes, lightPreset, styleLoaded, applyLightPreset]);
 
   // Supercluster pour les markers
   const clusterIndex = useMemo(() => {
@@ -284,6 +326,16 @@ export default function SunMap({
         pitchEnabled
         rotateEnabled
         onCameraChanged={onCameraChanged}
+        onDidFinishLoadingStyle={() => {
+          console.log(`[mapbox.style] ✅ style loaded — URL='${styleURL}'`);
+          setStyleLoaded(true);
+        }}
+        onDidFinishLoadingMap={() => {
+          console.log('[mapbox.map] ✅ map fully loaded (tiles + style)');
+        }}
+        onDidFailLoadingMap={() => {
+          console.warn('[mapbox.map] ❌ map failed to load — check token / network');
+        }}
         testID="sun-map-native"
       >
         <Camera
