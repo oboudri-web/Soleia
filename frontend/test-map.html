@@ -274,6 +274,12 @@
         // ShadeMap init
         try {
           if (typeof ShadeMap !== 'undefined') {
+            // Defensive re-alias: in case the earlier alias step ran before
+            // window was fully ready, ensure mapboxgl points to maplibregl
+            // before constructing ShadeMap.
+            if (typeof window.maplibregl !== 'undefined' && !window.mapboxgl) {
+              window.mapboxgl = window.maplibregl;
+            }
             shadeMap = new ShadeMap({
               date: new Date(),
               color: '#01112f',
@@ -419,16 +425,12 @@
   </script>
 
   <script>
-    // ---- Standalone test harness (NOT in MAP_HTML production) ---------------
     window.ReactNativeWebView = {
-      postMessage: function (s) {
-        try { var p = JSON.parse(s); console.log('[postToRN]', p.type, p); }
-        catch(e) { console.log('[postToRN]', s); }
-      }
+      postMessage: function (s) { try { var p = JSON.parse(s); console.log('[postToRN]', p.type, p); } catch(e) { console.log('[postToRN]', s); } }
     };
     window.addEventListener('load', function () {
       setTimeout(function () {
-        if (!window.updateTerraces) { console.warn('updateTerraces not yet available'); return; }
+        if (!window.updateTerraces) return;
         window.updateTerraces([
           { id: 't1', name: 'Cafe du Centre', lat: 47.2184, lng: -1.5536, sun_status: 'sunny', type: 'cafe' },
           { id: 't2', name: 'Le Bistro', lat: 47.2189, lng: -1.5520, sun_status: 'shadow', type: 'bistro' },

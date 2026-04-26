@@ -301,6 +301,12 @@ export const MAP_HTML = `<!DOCTYPE html>
         // ShadeMap init
         try {
           if (typeof ShadeMap !== 'undefined') {
+            // Defensive re-alias: in case the earlier alias step ran before
+            // window was fully ready, ensure mapboxgl points to maplibregl
+            // before constructing ShadeMap.
+            if (typeof window.maplibregl !== 'undefined' && !window.mapboxgl) {
+              window.mapboxgl = window.maplibregl;
+            }
             shadeMap = new ShadeMap({
               date: new Date(),
               color: '#01112f',
