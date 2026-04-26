@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soleia.app",
-      "buildNumber": "40",
+      "buildNumber": "45",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Trouver les terrasses au soleil près de vous",
         "NSCameraUsageDescription": "Prendre une photo pour valider cette terrasse",
