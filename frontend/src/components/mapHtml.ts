@@ -22,7 +22,7 @@ const SHADEMAP_KEY =
   'eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Im9ib3VkcmlAZ21haWwuY29tIiwiY3JlYXRlZCI6MTc3NzE5NjQ0NzAwMiwiaWF0IjoxNzc3MTk2NDQ3fQ.Mu6MZW3988d8F4OHMuNQzUllI46EZscid0sFTofwW_o';
 
 // The big inline map page. We use String.raw to avoid backtick-collision with
-// any minified JS that might contain backticks (we still must escape ` and ${
+// any minified JS that might contain backticks (we still must escape them and dollar-brace
 // in the body - but our body is hand-written so we use plain template here and
 // keep external libs in base64 vars decoded at runtime via atob()).
 export const MAP_HTML = `<!DOCTYPE html>
@@ -193,8 +193,8 @@ export const MAP_HTML = `<!DOCTYPE html>
         // --- Batiments 3D extrudes (fill-extrusion) - style SunSeekr ------
         // Le style streets-v2 de MapTiler suit le schema OpenMapTiles : la
         // source 'openmaptiles' contient un source-layer 'building' avec un
-        // attribut `render_height` pour la hauteur reelle du batiment et
-        // `render_min_height` pour le sol (utilise pour les batiments perches).
+        // attribut 'render_height' pour la hauteur reelle du batiment et
+        // 'render_min_height' pour le sol (utilise pour les batiments perches).
         // On injecte une couche fill-extrusion par-dessus en cachant la couche
         // 'building' 2D par defaut pour eviter le doublon.
         try {

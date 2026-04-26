@@ -199,7 +199,7 @@ export default function SunMap({
     );
   }, [terraces, mapReady, userLocation?.lat, userLocation?.lng]);
 
-  // --- Recenter the map when `center` changes (city switch) --------------
+  // --- Recenter the map when 'center' changes (city switch) --------------
   useEffect(() => {
     if (!mapReady || !webRef.current) return;
     if (typeof center?.lat !== 'number' || typeof center?.lng !== 'number') return;
