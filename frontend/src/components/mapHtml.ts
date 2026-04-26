@@ -264,33 +264,63 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'error', msg: 'maplibregl global missing' });
         return;
       }
-      // MapTiler Streets - 3D buildings + nice cartography. ShadeMap with
-      // tileSize:514 supports pitch > 45 natively, so we are back on the
-      // perspective view that gives the immersive feel.
-      var STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=PrVP1L26j30UHcrnm87w';
+      // Voyager Sunseekr style (inlined JSON, public CARTO tiles, no API key).
+      // Locked top-down (pitch=0) for clean shadow read like SunSeekr.
+      var STYLE_URL = 'inline:voyager-sunseekr';
 
       map = new maplibregl.Map({
         container: 'map',
-        style: STYLE_URL,
+        style: MAP_STYLE,
         center: [-1.5536, 47.2184], // Nantes default
         zoom: 15,
         minZoom: 3,
         maxZoom: 20,
-        pitch: 45,
+        pitch: 0,
         bearing: 0,
         attributionControl: false,
-        maxPitch: 70,
+        maxPitch: 0,
         antialias: true,
       });
 
-      // Re-enable rotation + pitch gestures (3D feel)
-      try { map.touchZoomRotate.enable(); } catch (e) {}
-      try { map.dragRotate.enable(); } catch (e) {}
-      try { map.touchPitch && map.touchPitch.enable && map.touchPitch.enable(); } catch (e) {}
+      // Lock top-down: no rotation, no pitch.
+      try { map.touchZoomRotate.disableRotation(); } catch (e) {}
+      try { map.dragRotate.disable(); } catch (e) {}
+      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
 
       map.on('load', function () {
         postToRN({ type: 'styleLoaded', url: STYLE_URL });
         postToRN({ type: 'mapReady' });
+
+        // ----- Hide POI / transit / parking / airport / bicycle / ferry layers
+        // We only want roads, buildings, water, parks visible. The only POIs
+        // on the map are our Soleia terrace markers (RN overlay).
+        try {
+          var hideKeywords = [
+            'poi', 'parking', 'transit', 'bus', 'tram',
+            'bicycle', 'ferry', 'airport',
+          ];
+          var hiddenCount = 0;
+          var styleLayersForHide = (map.getStyle().layers || []);
+          for (var iH = 0; iH < styleLayersForHide.length; iH++) {
+            var layerId = (styleLayersForHide[iH].id || '').toLowerCase();
+            for (var jH = 0; jH < hideKeywords.length; jH++) {
+              if (layerId.indexOf(hideKeywords[jH]) !== -1) {
+                try {
+                  map.setLayoutProperty(styleLayersForHide[iH].id, 'visibility', 'none');
+                  hiddenCount++;
+                } catch (eHide) {}
+                break;
+              }
+            }
+          }
+          postToRN({
+            type: 'layersHidden',
+            count: hiddenCount,
+            total: styleLayersForHide.length,
+          });
+        } catch (eAll) {
+          postToRN({ type: 'error', msg: 'layer hide failed: ' + eAll.message });
+        }
 
         // ----- SunSeekr-style top-down 3D: force fill-translate on building roof
         // The 3D illusion at pitch=0 comes from the building footprint being
@@ -601,7 +631,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     /** Fly the camera to a coordinate. */
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 45, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 0, duration: 800 });
     };
 
     /** Recenter without animation. */
