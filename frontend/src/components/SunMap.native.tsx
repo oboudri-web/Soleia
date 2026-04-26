@@ -110,6 +110,11 @@ export default function SunMap({
           console.log('[soleia.web] ✅ ShadeMap ready');
           setShadeReady(true);
           break;
+        case 'layersHidden':
+          console.log(
+            `[soleia.web] hidden ${data.count}/${data.total} POI/transit layers`,
+          );
+          break;
         case 'terracesAck':
           console.log(`[soleia.web] terracesAck count=${data.count}`);
           break;

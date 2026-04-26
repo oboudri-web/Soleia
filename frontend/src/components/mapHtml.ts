@@ -147,6 +147,38 @@ export const MAP_HTML = `<!DOCTYPE html>
 
       map.on('load', function () {
         postToRN({ type: 'mapReady' });
+
+        // ─── Masquer les couches POI/transit pour alléger la carte ────────
+        // Style "Apple Maps" : on garde routes, bâtiments, eau, parcs. Tous
+        // les POI/transit/parkings/airports etc. sont cachés. Les seuls POI
+        // visibles sur la carte sont nos markers terrasses Soleia.
+        try {
+          var layersToHide = [
+            'poi', 'poi-label', 'transit-label',
+            'airport-label', 'parking', 'parking-label',
+            'bus-stop', 'tram-stop', 'subway-station',
+            'railway', 'ferry',
+          ];
+          var hiddenCount = 0;
+          var allLayers = map.getStyle().layers || [];
+          for (var i = 0; i < allLayers.length; i++) {
+            var lyr = allLayers[i];
+            var lid = lyr.id || '';
+            for (var j = 0; j < layersToHide.length; j++) {
+              if (lid.indexOf(layersToHide[j]) !== -1) {
+                try {
+                  map.setLayoutProperty(lid, 'visibility', 'none');
+                  hiddenCount++;
+                } catch (innerErr) {}
+                break;
+              }
+            }
+          }
+          postToRN({ type: 'layersHidden', count: hiddenCount, total: allLayers.length });
+        } catch (e) {
+          postToRN({ type: 'error', msg: 'layer hide failed: ' + e.message });
+        }
+
         try {
           if (typeof ShadeMap !== 'undefined') {
             shadeMap = new ShadeMap({
