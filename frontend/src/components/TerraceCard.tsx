@@ -37,9 +37,11 @@ export default function TerraceCard({ terrace, onPress }: Props) {
   const sunLine = isClosed
     ? null
     : terrace.sun_status === 'sunny' && terrace.sunny_until
-    ? `Soleil jusqu'à ${hhmmToFr(terrace.sunny_until)}`
+    ? `\u2600\uFE0F Au soleil jusqu'\u00e0 ${hhmmToFr(terrace.sunny_until)}`
     : terrace.sun_status === 'soon' && terrace.next_sunny_time
-    ? `Soleil à ${hhmmToFr(terrace.next_sunny_time)}`
+    ? `\u2600\uFE0F Au soleil \u00e0 ${hhmmToFr(terrace.next_sunny_time)}`
+    : terrace.sun_status === 'shade' && terrace.next_sunny_time
+    ? `\u2600\uFE0F Au soleil \u00e0 ${hhmmToFr(terrace.next_sunny_time)}`
     : null;
 
   // Sun stat: % of 6h-22h window where the terrace is sunny + total duration in hours.

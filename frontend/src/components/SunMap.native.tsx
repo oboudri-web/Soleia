@@ -52,6 +52,7 @@ export default function SunMap({
   center,
   selectedId,
   onMarkerPress,
+  userLocation,
   focusCoords,
   currentMinutes,
   polygonsGeoJSON,
@@ -190,6 +191,20 @@ export default function SunMap({
       'try { window.setCenter(' + center.lat + ', ' + center.lng + ', 15); } catch(e){} true;',
     );
   }, [center?.lat, center?.lng, mapReady]);
+
+  // Push user location -> WebView (renders the blue pulsing puck)
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    if (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number') {
+      webRef.current.injectJavaScript(
+        'try { window.setUserLocation(' + userLocation.lat + ', ' + userLocation.lng + ', { recenter: true, zoom: 15 }); } catch(e){} true;',
+      );
+    } else {
+      webRef.current.injectJavaScript(
+        'try { window.setUserLocation(null); } catch(e){} true;',
+      );
+    }
+  }, [userLocation?.lat, userLocation?.lng, mapReady]);
 
   // Fly to focus coords on demand
   useEffect(() => {

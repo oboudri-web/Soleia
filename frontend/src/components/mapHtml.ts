@@ -152,6 +152,192 @@ export const MAP_HTML = `<!DOCTYPE html>
       }
 
       map.on('load', function () {
+        // ----- Hide POI / transit / parking / bicycle / ferry / airport
+        // and most label layers (keep road labels for street names).
+        try {
+          var hideKeywords = [
+            'poi', 'transit', 'bus', 'tram', 'parking',
+            'bicycle', 'airport', 'ferry',
+          ];
+          // Labels we keep (road labels make street names readable)
+          var keepLabelKeywords = ['road-label', 'road_label', 'road-name', 'street'];
+          var hiddenCount = 0;
+          var styleLayers = (map.getStyle().layers || []);
+          for (var iH = 0; iH < styleLayers.length; iH++) {
+            var lid = (styleLayers[iH].id || '').toLowerCase();
+            var hide = false;
+            for (var kH = 0; kH < hideKeywords.length; kH++) {
+              if (lid.indexOf(hideKeywords[kH]) !== -1) { hide = true; break; }
+            }
+            // Also hide any 'label' that is not a road label
+            if (!hide && lid.indexOf('label') !== -1) {
+              var keep = false;
+              for (var kK = 0; kK < keepLabelKeywords.length; kK++) {
+                if (lid.indexOf(keepLabelKeywords[kK]) !== -1) { keep = true; break; }
+              }
+              if (!keep) hide = true;
+            }
+            if (hide) {
+              try { map.setLayoutProperty(styleLayers[iH].id, 'visibility', 'none'); hiddenCount++; }
+              catch (eHide) {}
+            }
+          }
+          postToRN({ type: 'layersHidden', count: hiddenCount, total: styleLayers.length });
+        } catch (eAll) {
+          postToRN({ type: 'error', msg: 'layer hide failed: ' + eAll.message });
+        }
+
+        // ----- Terraces source with native Mapbox clustering -----------------
+        try {
+          map.addSource('soleia-terraces', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+            cluster: true,
+            clusterMaxZoom: 15,
+            clusterRadius: 50,
+            clusterProperties: {
+              // sum of 'sunny' (1/0) per child feature - cluster has any sunny if > 0
+              sunny: ['+', ['get', 'sunny']],
+              soonSunny: ['+', ['get', 'soonSunny']],
+            },
+          });
+
+          // Cluster bubble (orange if any sunny inside, white if any soonSunny, else grey)
+          map.addLayer({
+            id: 'soleia-clusters',
+            type: 'circle',
+            source: 'soleia-terraces',
+            filter: ['has', 'point_count'],
+            paint: {
+              'circle-color': [
+                'case',
+                ['>', ['get', 'sunny'], 0], '#F5A623',
+                ['>', ['get', 'soonSunny'], 0], '#FFFFFF',
+                '#9E9E9E',
+              ],
+              'circle-radius': [
+                'step', ['get', 'point_count'],
+                14,   // < 5
+                5, 18,
+                15, 22,
+                50, 26,
+              ],
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#FFFFFF',
+              'circle-opacity': 0.95,
+            },
+          });
+          map.addLayer({
+            id: 'soleia-cluster-count',
+            type: 'symbol',
+            source: 'soleia-terraces',
+            filter: ['has', 'point_count'],
+            layout: {
+              'text-field': ['get', 'point_count_abbreviated'],
+              'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+              'text-size': 13,
+              'text-allow-overlap': true,
+            },
+            paint: {
+              'text-color': [
+                'case',
+                ['>', ['get', 'sunny'], 0], '#FFFFFF',
+                ['>', ['get', 'soonSunny'], 0], '#333333',
+                '#FFFFFF',
+              ],
+            },
+          });
+
+          // Unclustered individual marker (8px small dot)
+          map.addLayer({
+            id: 'soleia-unclustered',
+            type: 'circle',
+            source: 'soleia-terraces',
+            filter: ['!', ['has', 'point_count']],
+            paint: {
+              'circle-color': [
+                'case',
+                ['==', ['get', 'sunny'], 1], '#F5A623',
+                ['==', ['get', 'soonSunny'], 1], '#FFFFFF',
+                '#9E9E9E',
+              ],
+              'circle-radius': 6,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#FFFFFF',
+              'circle-opacity': 0.95,
+            },
+          });
+
+          // Click cluster -> zoom in
+          map.on('click', 'soleia-clusters', function (e) {
+            var f = (e.features || [])[0];
+            if (!f) return;
+            var clusterId = f.properties.cluster_id;
+            var src = map.getSource('soleia-terraces');
+            if (!src || !src.getClusterExpansionZoom) return;
+            src.getClusterExpansionZoom(clusterId, function (err, zoom) {
+              if (err) return;
+              map.easeTo({ center: f.geometry.coordinates, zoom: zoom });
+            });
+          });
+
+          // Click individual marker -> postMessage to RN
+          map.on('click', 'soleia-unclustered', function (e) {
+            var f = (e.features || [])[0];
+            if (!f) return;
+            postToRN({ type: 'markerPress', id: f.properties.id });
+          });
+
+          // Cursor feedback on web (no-op on iOS)
+          map.on('mouseenter', 'soleia-clusters', function () { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'soleia-clusters', function () { map.getCanvas().style.cursor = ''; });
+          map.on('mouseenter', 'soleia-unclustered', function () { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'soleia-unclustered', function () { map.getCanvas().style.cursor = ''; });
+        } catch (eClu) {
+          postToRN({ type: 'error', msg: 'cluster setup failed: ' + eClu.message });
+        }
+
+        // ----- User location source (blue puck with pulse) ------------------
+        try {
+          map.addSource('soleia-user', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+          });
+          map.addLayer({
+            id: 'soleia-user-pulse',
+            type: 'circle',
+            source: 'soleia-user',
+            paint: {
+              'circle-color': '#4285F4',
+              'circle-radius': 18,
+              'circle-opacity': 0.18,
+              'circle-stroke-width': 0,
+            },
+          });
+          map.addLayer({
+            id: 'soleia-user-dot',
+            type: 'circle',
+            source: 'soleia-user',
+            paint: {
+              'circle-color': '#4285F4',
+              'circle-radius': 7,
+              'circle-stroke-width': 2.5,
+              'circle-stroke-color': '#FFFFFF',
+            },
+          });
+          // Animate the pulse halo radius (12 -> 24 -> 12) every 1.5s
+          var pulseT = 0;
+          setInterval(function () {
+            try {
+              pulseT = (pulseT + 0.05) % (Math.PI * 2);
+              var r = 14 + Math.sin(pulseT) * 6;
+              map.setPaintProperty('soleia-user-pulse', 'circle-radius', r);
+            } catch (eP) {}
+          }, 60);
+        } catch (eU) {
+          postToRN({ type: 'error', msg: 'user dot setup failed: ' + eU.message });
+        }
+
         try {
           shadeMap = new ShadeMap({
             apiKey: SHADEMAP_KEY,
@@ -229,6 +415,94 @@ export const MAP_HTML = `<!DOCTYPE html>
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
       map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 16, duration: 800 });
+    };
+
+    /** Push the terraces list to the clustered GeoJSON source. */
+    window.updateTerraces = function (list) {
+      try {
+        if (!map || !map.getSource('soleia-terraces')) return;
+        var arr = Array.isArray(list) ? list : [];
+        var feats = [];
+        for (var i = 0; i < arr.length; i++) {
+          var t = arr[i];
+          if (typeof t.lat !== 'number' || typeof t.lng !== 'number') continue;
+          var sunny = t.sun_status === 'sunny' ? 1 : 0;
+          var soonSunny = (t.sun_status === 'soon_sunny' || t.upcoming_sunny) ? 1 : 0;
+          feats.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [t.lng, t.lat] },
+            properties: {
+              id: t.id,
+              name: t.name,
+              sunny: sunny,
+              soonSunny: soonSunny,
+              type: t.type || 'cafe',
+            },
+          });
+        }
+        map.getSource('soleia-terraces').setData({
+          type: 'FeatureCollection',
+          features: feats,
+        });
+        postToRN({ type: 'terracesAck', count: feats.length });
+      } catch (e) {
+        postToRN({ type: 'error', msg: 'updateTerraces failed: ' + e.message });
+      }
+    };
+
+    /** Set the user-location blue puck (pulsing halo). Pass null to clear. */
+    window.setUserLocation = function (lat, lng, opts) {
+      try {
+        if (!map || !map.getSource('soleia-user')) return;
+        if (typeof lat !== 'number' || typeof lng !== 'number') {
+          map.getSource('soleia-user').setData({ type: 'FeatureCollection', features: [] });
+          return;
+        }
+        map.getSource('soleia-user').setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+            properties: {},
+          }],
+        });
+        if (opts && opts.recenter) {
+          map.jumpTo({
+            center: [lng, lat],
+            zoom: typeof opts.zoom === 'number' ? opts.zoom : 15,
+          });
+        }
+        postToRN({ type: 'userLocationSet', lat: lat, lng: lng });
+      } catch (e) {
+        postToRN({ type: 'error', msg: 'setUserLocation failed: ' + e.message });
+      }
+    };
+
+    /** Convenience: update the markers' sun_status without rebuilding all features. */
+    window.updateSunStatus = function (updates) {
+      try {
+        if (!map || !map.getSource('soleia-terraces') || !Array.isArray(updates)) return;
+        var current = map.getSource('soleia-terraces')._data;
+        if (!current || !current.features) return;
+        var byId = {};
+        for (var u = 0; u < updates.length; u++) byId[updates[u].id] = updates[u];
+        var changed = 0;
+        for (var i = 0; i < current.features.length; i++) {
+          var f = current.features[i];
+          var up = byId[f.properties && f.properties.id];
+          if (!up) continue;
+          var newSunny = up.sun_status === 'sunny' ? 1 : 0;
+          var newSoon = (up.sun_status === 'soon_sunny' || up.upcoming_sunny) ? 1 : 0;
+          if (f.properties.sunny !== newSunny || f.properties.soonSunny !== newSoon) {
+            f.properties.sunny = newSunny;
+            f.properties.soonSunny = newSoon;
+            changed++;
+          }
+        }
+        if (changed > 0) map.getSource('soleia-terraces').setData(current);
+      } catch (e) {
+        postToRN({ type: 'error', msg: 'updateSunStatus failed: ' + e.message });
+      }
     };
 
     document.addEventListener('DOMContentLoaded', function () {

@@ -106,7 +106,6 @@ export default function MapScreen() {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<SunStatus | 'all'>('all');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [showCityPicker, setShowCityPicker] = useState(false);
   const [mapThemePref, setMapThemePrefState] = useState<MapThemePref>('auto');
   const [nextSunny, setNextSunny] = useState<NextSunny | null>(null);
   const [focusCoords, setFocusCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -163,11 +162,48 @@ export default function MapScreen() {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setUserLocation({ lat, lng });
+
+        // Auto-détection de la ville la plus proche (parmi les villes supportées).
+        // On bascule uniquement si la ville détectée est différente de celle affichée.
+        try {
+          const toRad = (deg: number) => (deg * Math.PI) / 180;
+          const haversine = (a: any, b: any) => {
+            const R = 6371;
+            const dLat = toRad(b.lat - a.lat);
+            const dLng = toRad(b.lng - a.lng);
+            const x =
+              Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(x));
+          };
+          let bestName = city;
+          let bestDist = Infinity;
+          Object.entries(CITY_COORDS).forEach(([name, coords]) => {
+            const d = haversine({ lat, lng }, coords);
+            if (d < bestDist) {
+              bestDist = d;
+              bestName = name;
+            }
+          });
+          // Seuil 50 km : si l'utilisateur est à plus de 50km de toutes les villes,
+          // on garde la ville par défaut (URL/Nantes).
+          if (bestName !== city && bestDist <= 50) {
+            console.log(`[geo] auto-detected nearest city: ${bestName} (${bestDist.toFixed(1)} km) → switching from ${city}`);
+            router.replace({ pathname: '/map', params: { city: bestName } });
+          } else {
+            console.log(`[geo] keeping city=${city} (nearest=${bestName} @ ${bestDist.toFixed(1)} km)`);
+          }
+        } catch (eAuto) {
+          console.warn('[geo] auto-city detection error', eAuto);
+        }
       } catch (e) {
         console.warn('Location error', e);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const centerOnUser = async () => {
@@ -409,6 +445,15 @@ export default function MapScreen() {
       console.log(
         `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — city=${city} bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
       );
+      // ── Stats par ville (sun_status breakdown)
+      try {
+        const sunny = terracesRes.terraces.filter((t) => t.sun_status === 'sunny').length;
+        const soon = terracesRes.terraces.filter((t) => t.sun_status === 'soon').length;
+        const shade = terracesRes.terraces.filter((t) => t.sun_status === 'shade').length;
+        console.log(
+          `[stats] ${city}: ${terracesRes.terraces.length} terraces | sunny=${sunny} | soon=${soon} | shade=${shade}`,
+        );
+      } catch (_e) {}
       setTerraces(terracesRes.terraces);
       setWeather(weatherRes);
 
@@ -440,9 +485,49 @@ export default function MapScreen() {
   }, [isLiveMode]);
 
   const filteredTerraces = useMemo(() => {
-    if (statusFilter === 'all') return terraces;
-    return terraces.filter((t) => t.sun_status === statusFilter);
-  }, [terraces, statusFilter]);
+    // 1) Filter by status
+    const base = statusFilter === 'all'
+      ? terraces
+      : terraces.filter((t) => t.sun_status === statusFilter);
+    if (!base.length) return base;
+
+    // 2) Haversine distance (km)
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const haversine = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    };
+
+    // 3) 4-tier sort (Near+Sun > Near+Soon > Near+Shade > Far)
+    const NEAR_KM = 1.0;
+    const ref = userLocation || mapCenter;
+    const decorated = base.map((t) => {
+      const dist =
+        ref && typeof ref.lat === 'number' && typeof ref.lng === 'number'
+          ? haversine(ref.lat, ref.lng, t.lat, t.lng)
+          : t.distance_km != null
+          ? t.distance_km
+          : 999;
+      const isNear = dist <= NEAR_KM;
+      let tier = 4; // far
+      if (isNear) {
+        if (t.sun_status === 'sunny') tier = 1;
+        else if (t.sun_status === 'soon') tier = 2;
+        else tier = 3; // shade
+      }
+      return { t, dist, tier };
+    });
+    decorated.sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      return a.dist - b.dist;
+    });
+    return decorated.map((d) => d.t);
+  }, [terraces, statusFilter, userLocation?.lat, userLocation?.lng, mapCenter.lat, mapCenter.lng]);
 
   const sunnyCount = useMemo(
     () => terraces.filter((t) => t.sun_status === 'sunny').length,
@@ -541,13 +626,10 @@ export default function MapScreen() {
             <Text style={[styles.headerBrand, { color: theme.text }]}>Soleia</Text>
           </TouchableOpacity>
 
-          {/* Centre : ville cliquable + icône météo dynamique + température */}
-          <TouchableOpacity
-            testID="city-selector"
-            activeOpacity={0.7}
-            onPress={() => setShowCityPicker(true)}
+          {/* Centre : ville détectée (non-cliquable) + icône météo dynamique + température */}
+          <View
+            testID="city-display"
             style={styles.headerCenter}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={[styles.headerCity, { color: theme.text }]} numberOfLines={1}>
               {city}
@@ -561,7 +643,7 @@ export default function MapScreen() {
             <Text style={[styles.headerTemp, { color: theme.text }]}>
               {weather?.temperature != null ? `${Math.round(weather.temperature)}°` : '—°'}
             </Text>
-          </TouchableOpacity>
+          </View>
 
           {/* Droite : jour/date — reflète l'offset du slider */}
           <Text style={[styles.headerDate, { color: theme.textSecondary }]}>
@@ -800,97 +882,6 @@ export default function MapScreen() {
           />
         )}
       </BottomSheet>
-
-      {/* City picker bottom sheet */}
-      <Modal
-        visible={showCityPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowCityPicker(false)}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setShowCityPicker(false)}
-          style={styles.citySheetOverlay}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => {}}
-            style={[styles.citySheet, { backgroundColor: theme.surface, paddingBottom: Math.max(insets.bottom, SPACING.md) }]}
-            testID="city-picker-sheet"
-          >
-            <View style={styles.citySheetHandle}>
-              <View style={[styles.citySheetHandleBar, { backgroundColor: theme.border }]} />
-            </View>
-            <Text style={[styles.citySheetTitle, { color: theme.text }]}>
-              Choisir une ville
-            </Text>
-            <ScrollView style={styles.citySheetList} showsVerticalScrollIndicator={false}>
-              {Object.keys(CITY_COORDS).map((c) => {
-                const active = c === city;
-                return (
-                  <TouchableOpacity
-                    key={c}
-                    testID={`city-option-${c}`}
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      setShowCityPicker(false);
-                      if (c !== city) {
-                        router.replace({ pathname: '/map', params: { city: c } });
-                      }
-                    }}
-                    style={[styles.cityRow, { borderBottomColor: theme.border }]}
-                  >
-                    <View style={[
-                      styles.cityRowIcon,
-                      { backgroundColor: active ? theme.primary : theme.surfaceSecondary },
-                    ]}>
-                      <Ionicons
-                        name="location"
-                        size={14}
-                        color={active ? '#FFFFFF' : theme.textSecondary}
-                      />
-                    </View>
-                    <Text style={[
-                      styles.cityRowText,
-                      { color: theme.text, fontWeight: active ? '700' : '500' },
-                    ]}>
-                      {c}
-                    </Text>
-                    {active ? (
-                      <Ionicons name="checkmark" size={20} color={theme.primary} />
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            {/* Pro portal link - moved here from map overlay */}
-            <TouchableOpacity
-              testID="btn-pro-link"
-              activeOpacity={0.7}
-              onPress={() => {
-                setShowCityPicker(false);
-                setTimeout(() => router.push('/pro'), 150);
-              }}
-              style={[styles.proRow, { borderTopColor: theme.border }]}
-            >
-              <View style={[styles.cityRowIcon, { backgroundColor: theme.surfaceSecondary }]}>
-                <Ionicons name="business" size={14} color={theme.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.proRowTitle, { color: theme.text }]}>
-                  Vous êtes restaurateur ?
-                </Text>
-                <Text style={[styles.proRowSub, { color: theme.textSecondary }]}>
-                  Mettez votre terrasse en avant
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={theme.textTertiary} />
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
 
     </View>
   );
