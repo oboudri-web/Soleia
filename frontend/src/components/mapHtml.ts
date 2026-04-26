@@ -135,15 +135,26 @@ export const MAP_HTML = `<!DOCTYPE html>
         style: STYLE_URL,
         center: initialCenter || [-1.5536, 47.2184],
         zoom: initialZoom != null ? initialZoom : 17,
-        pitch: 62,
+        // Pitch 0 = vue top-down comme SunSeekr. Les bâtiments restent
+        // extrudés (donc ShadeMap a des hauteurs pour calculer les ombres),
+        // mais on les voit du dessus → on voit les toits beiges + l'ombre
+        // projetée à côté. C'est ce pattern qui crée la 3D *visuelle* sans
+        // perspective. Pitch 3D classique (45-60°) écrase la lecture des
+        // rues et masque les ombres.
+        pitch: 0,
         bearing: 0,
         attributionControl: false,
-        maxPitch: 75,
+        // On limite le pitch max pour empêcher l'utilisateur de basculer en
+        // perspective (geste 2 doigts vertical). Garde la lisibilité top-down.
+        maxPitch: 0,
         antialias: true,
       });
 
       map.touchZoomRotate.enable();
-      map.dragRotate.enable();
+      // Désactiver le drag-rotate ET la pitch via 2-doigts vertical → la
+      // carte reste stricte top-down comme SunSeekr.
+      map.dragRotate.disable();
+      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
 
       map.on('load', function () {
         postToRN({ type: 'mapReady' });
@@ -214,13 +225,9 @@ export const MAP_HTML = `<!DOCTYPE html>
             type: 'fill-extrusion',
             minzoom: 14,
             paint: {
-              'fill-extrusion-color': [
-                'interpolate', ['linear'], ['get', 'render_height'],
-                0, '#e6e2dc',
-                10, '#dcd6cd',
-                30, '#cfc7bb',
-                80, '#b8ad9c',
-              ],
+              // Couleur uniforme beige clair façon SunSeekr — tous les toits
+              // ont la même couleur (vu top-down, pas de gradient).
+              'fill-extrusion-color': '#f0e6d6',
               'fill-extrusion-height': [
                 'interpolate', ['linear'], ['zoom'],
                 14, 0,
@@ -231,7 +238,7 @@ export const MAP_HTML = `<!DOCTYPE html>
                 14, 0,
                 15.5, ['get', 'render_min_height'],
               ],
-              'fill-extrusion-opacity': 0.95,
+              'fill-extrusion-opacity': 1.0,
             },
           }, beforeLayerId);
           postToRN({ type: 'buildings3DAdded', beforeLayer: beforeLayerId || 'top' });
@@ -243,8 +250,11 @@ export const MAP_HTML = `<!DOCTYPE html>
           if (typeof ShadeMap !== 'undefined') {
             shadeMap = new ShadeMap({
               date: new Date(),
-              color: '#01112f',
-              opacity: 0.7,
+              // Gris-bleuté façon SunSeekr (au lieu de bleu nuit #01112f).
+              // L'œil lit ça comme une vraie ombre projetée, pas comme un
+              // voile bleu sur la carte.
+              color: '#3a4252',
+              opacity: 0.55,
               apiKey: SHADEMAP_KEY,
               terrainSource: {
                 tileSize: 514,
@@ -375,7 +385,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 62, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 0, duration: 800 });
     };
 
     window.setCenter = function (lat, lng, zoom) {
