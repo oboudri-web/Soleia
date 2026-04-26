@@ -249,7 +249,11 @@ export default function SunMap({
         scrollEnabled={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
-        injectedJavaScriptBeforeContentLoaded={'window.__SOLEIA_RN__ = true; true;'}
+        injectedJavaScriptBeforeContentLoaded={
+          'window.__SOLEIA_RN__ = true; window.__SOLEIA_MAPBOX_TOKEN__ = ' +
+          JSON.stringify(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '') +
+          '; true;'
+        }
         startInLoadingState={false}
         mixedContentMode="always"
         thirdPartyCookiesEnabled

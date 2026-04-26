@@ -218,3 +218,6 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Standalone test page - regenerated locally, contains tokens
+frontend/test-map.html
