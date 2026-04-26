@@ -28,7 +28,7 @@ const SHADEMAP_KEY =
 export const MAP_HTML = `<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Soleia Map</title>
   <style id="maplibre-css-placeholder"></style>
@@ -118,12 +118,13 @@ export const MAP_HTML = `<!DOCTYPE html>
     var SOLEIA_ORANGE = '#F5A623';
     var SOLEIA_GREY = '#9E9E9E';
     var ICONS = {
-      bar: '\\ud83c\\udf7a',
-      bistro: '\\ud83c\\udf77',
-      cafe: '\\u2615',
-      restaurant: '\\ud83c\\udf7d\\ufe0f',
-      rooftop: '\\ud83c\\udf07'
+      bar: String.fromCodePoint(0x1F37A),         // beer mug
+      bistro: String.fromCodePoint(0x1F377),      // wine glass
+      cafe: String.fromCodePoint(0x2615),          // coffee
+      restaurant: String.fromCodePoint(0x1F37D, 0xFE0F), // fork and knife with plate
+      rooftop: String.fromCodePoint(0x1F307),     // sunset over buildings
     };
+    var FALLBACK_ICON = String.fromCodePoint(0x2600, 0xFE0F); // sun
     // Personalised terrace polygon colors
     var TERRACE_COLORS = {
       garden: '#7CB342',
@@ -158,8 +159,8 @@ export const MAP_HTML = `<!DOCTYPE html>
       el.style.filter = sunny ? 'none' : 'brightness(0.75) saturate(0.6)';
       el.style.opacity = sunny ? '1' : '0.85';
       var iconKey = (terrace.type || 'cafe').toLowerCase();
-      var icon = ICONS[iconKey] || '\\u2600\\ufe0f';
-      el.innerHTML = icon;
+      var icon = ICONS[iconKey] || FALLBACK_ICON;
+      el.textContent = icon;
       el.addEventListener('click', function (ev) {
         ev.stopPropagation();
         postToRN({ type: 'markerPress', id: terrace.id });
@@ -307,12 +308,23 @@ export const MAP_HTML = `<!DOCTYPE html>
             if (typeof window.maplibregl !== 'undefined' && !window.mapboxgl) {
               window.mapboxgl = window.maplibregl;
             }
-            shadeMap = new ShadeMap({
+            // Detect local Chrome (file:// protocol) - the MapTiler terrain
+            // tiles trigger a CORS / texSubImage2D: no pixels error when
+            // loaded from file://. The same code in iOS WebView (which uses
+            // baseUrl https://localhost) and on http(s) servers works fine,
+            // so we disable terrain ONLY when protocol === 'file:'.
+            var IS_LOCAL = (typeof window !== 'undefined') &&
+              window.location && window.location.protocol === 'file:';
+            var shadeOpts = {
               date: new Date(),
               color: '#01112f',
               opacity: 0.7,
               apiKey: SHADEMAP_KEY,
-              terrainSource: {
+              belowCanopy: false,
+              debug: function (msg) { postToRN({ type: 'shadeLog', msg: String(msg) }); },
+            };
+            if (!IS_LOCAL) {
+              shadeOpts.terrainSource = {
                 tileSize: 512,
                 maxZoom: 12,
                 getSourceUrl: function (args) {
@@ -323,11 +335,12 @@ export const MAP_HTML = `<!DOCTYPE html>
                 getElevation: function (args) {
                   return -10000 + (args.r * 256 * 256 + args.g * 256 + args.b) * 0.1;
                 },
-              },
-              belowCanopy: false,
-              debug: function (msg) { postToRN({ type: 'shadeLog', msg: String(msg) }); },
-            }).addTo(map);
-            postToRN({ type: 'shadeMapReady', licensed: true });
+              };
+            } else {
+              postToRN({ type: 'shadeLog', msg: 'IS_LOCAL=true - terrain disabled (file:// CORS)' });
+            }
+            shadeMap = new ShadeMap(shadeOpts).addTo(map);
+            postToRN({ type: 'shadeMapReady', licensed: true, terrain: !IS_LOCAL });
 
             // When ShadeMap finishes a render pass, update each marker.
             try {
