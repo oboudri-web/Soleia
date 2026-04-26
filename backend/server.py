@@ -235,7 +235,7 @@ async def list_terraces(
     sun_status: Optional[str] = Query(None, description="Filtrer par statut: sunny, soon, shade"),
     min_rating: Optional[float] = Query(None, description="Note minimale Google"),
     at_time: Optional[str] = Query(None, description="ISO datetime ou HH:MM pour calcul soleil à ce moment"),
-    limit: int = Query(200, ge=1, le=500, description="Maximum de résultats (max 200)"),
+    limit: int = Query(200, ge=1, le=2000, description="Maximum de résultats (max 2000)"),
 ):
     """
     Liste les terrasses avec calcul solaire dynamique en temps réel.
@@ -249,7 +249,7 @@ async def list_terraces(
     
     Filtre géographique obligatoire : utiliser lat_min/lat_max/lng_min/lng_max
     pour ne charger que les établissements visibles dans la carte.
-    Maximum 200 résultats par requête.
+    Maximum 2000 résultats par requête (utilisé pour le mode "toutes les villes").
     """
     # Fast-food explicitement demandé → retour vide (jamais affiché)
     if type == "fast_food":
@@ -303,8 +303,8 @@ async def list_terraces(
 
     target_time = parse_at_time(at_time)
 
-    # Cap hard à 200 (même si limit=500 demandé)
-    effective_limit = min(limit, 200)
+    # Cap hard à 2000 (pour mode "toutes les villes globalement")
+    effective_limit = min(limit, 2000)
     cursor = db.terraces.find(query, {"_id": 0}).limit(effective_limit + 50)
     # +50 buffer pour absorber les filtres Python (sun_status, radius_km)
     terraces = await cursor.to_list(effective_limit + 50)

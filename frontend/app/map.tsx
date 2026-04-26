@@ -159,12 +159,37 @@ export default function MapScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        console.log('[geo] requesting foreground permission...');
+        // Vérifier d'abord que le service de localisation est activé sur l'appareil
+        try {
+          const enabled = await Location.hasServicesEnabledAsync();
+          console.log('[geo] location services enabled:', enabled);
+          if (!enabled) {
+            console.warn('[geo] location services disabled — user must enable in Settings');
+            return;
+          }
+        } catch (eSvc) {
+          console.warn('[geo] hasServicesEnabledAsync error', eSvc);
+        }
+
+        const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+        console.log('[geo] permission status:', status, 'canAskAgain:', canAskAgain);
+        if (status !== 'granted') {
+          console.warn('[geo] permission denied — user can re-enable from Settings → Soleia');
+          return;
+        }
+
+        console.log('[geo] fetching current position (Balanced accuracy, 8s timeout)...');
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        console.log(`[geo] ✅ position received: lat=${lat.toFixed(5)} lng=${lng.toFixed(5)} (accuracy=${pos.coords.accuracy}m)`);
         setUserLocation({ lat, lng });
+        // Centrer la carte explicitement (en plus du recenter dans setUserLocation côté WebView).
+        // Ceci utilise focusCoords qui déclenche window.flyTo dans le WebView via SunMap.
+        setFocusCoords({ lat, lng });
 
         // Auto-détection de la ville la plus proche (parmi les villes supportées).
         // On bascule uniquement si la ville détectée est différente de celle affichée.
@@ -200,7 +225,7 @@ export default function MapScreen() {
           console.warn('[geo] auto-city detection error', eAuto);
         }
       } catch (e) {
-        console.warn('Location error', e);
+        console.warn('[geo] ❌ error', e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -427,10 +452,12 @@ export default function MapScreen() {
       // En mode live OU aujourd'hui sans planning → pas d'at_time ; sinon on envoie la date+heure
       const isPlanningMode = dateOffset > 0 || !isLiveMode;
       const atTime = isPlanningMode ? buildAtTime() : undefined;
-      const params: any = { city, limit: 100 };
+      // ── On charge désormais TOUTES les villes globalement (pas de filtre `city`).
+      // Le tri 4-niveaux côté frontend s'occupe de l'affichage par proximité.
+      const params: any = { limit: 1000 };
       if (typeFilter !== 'all') params.type = typeFilter;
       if (atTime) params.at_time = atTime;
-      // Bounding box obligatoire : limite le chargement à la zone visible
+      // Bounding box optionnel : limite si l'utilisateur est zoomé
       if (mapBbox) {
         params.lat_min = mapBbox.lat_min;
         params.lat_max = mapBbox.lat_max;
@@ -443,16 +470,32 @@ export default function MapScreen() {
         api.getWeather(city).catch(() => null),
       ]);
       console.log(
-        `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — city=${city} bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
+        `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — ALL CITIES bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
       );
-      // ── Stats par ville (sun_status breakdown)
+      // ── Stats globales + breakdown par ville
       try {
-        const sunny = terracesRes.terraces.filter((t) => t.sun_status === 'sunny').length;
-        const soon = terracesRes.terraces.filter((t) => t.sun_status === 'soon').length;
-        const shade = terracesRes.terraces.filter((t) => t.sun_status === 'shade').length;
+        const all = terracesRes.terraces;
+        const sunny = all.filter((t) => t.sun_status === 'sunny').length;
+        const soon = all.filter((t) => t.sun_status === 'soon').length;
+        const shade = all.filter((t) => t.sun_status === 'shade').length;
         console.log(
-          `[stats] ${city}: ${terracesRes.terraces.length} terraces | sunny=${sunny} | soon=${soon} | shade=${shade}`,
+          `[stats] TOTAL: ${all.length} terraces | sunny=${sunny} | soon=${soon} | shade=${shade}`,
         );
+        // Per-city breakdown
+        const byCity: Record<string, { total: number; sunny: number; soon: number; shade: number }> = {};
+        all.forEach((t) => {
+          const c = t.city || '?';
+          if (!byCity[c]) byCity[c] = { total: 0, sunny: 0, soon: 0, shade: 0 };
+          byCity[c].total++;
+          if (t.sun_status === 'sunny') byCity[c].sunny++;
+          else if (t.sun_status === 'soon') byCity[c].soon++;
+          else if (t.sun_status === 'shade') byCity[c].shade++;
+        });
+        Object.entries(byCity)
+          .sort((a, b) => b[1].total - a[1].total)
+          .forEach(([c, s]) => {
+            console.log(`[stats]   ${c}: ${s.total} (sunny=${s.sunny}, soon=${s.soon}, shade=${s.shade})`);
+          });
       } catch (_e) {}
       setTerraces(terracesRes.terraces);
       setWeather(weatherRes);
@@ -573,6 +616,12 @@ export default function MapScreen() {
 
   const onMarkerPress = (t: Terrace) => {
     setSelectedId(t.id);
+    // Ouvre directement la fiche terrasse au tap (cluster individual point)
+    const isPlanning = dateOffset > 0 || !isLiveMode;
+    router.push({
+      pathname: '/terrace/[id]',
+      params: { id: t.id, at_time: isPlanning ? buildAtTime() : '' },
+    });
   };
 
   const onCardPress = (t: Terrace) => {
