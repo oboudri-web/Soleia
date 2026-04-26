@@ -107,6 +107,7 @@ export default function MapScreen() {
   const [statusFilter, setStatusFilter] = useState<SunStatus | 'all'>('all');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapThemePref, setMapThemePrefState] = useState<MapThemePref>('auto');
+  const [tooFarZoomedOut, setTooFarZoomedOut] = useState(false);
   const [nextSunny, setNextSunny] = useState<NextSunny | null>(null);
   const [focusCoords, setFocusCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [sliderExpanded, setSliderExpanded] = useState(false);
@@ -452,12 +453,32 @@ export default function MapScreen() {
       // En mode live OU aujourd'hui sans planning → pas d'at_time ; sinon on envoie la date+heure
       const isPlanningMode = dateOffset > 0 || !isLiveMode;
       const atTime = isPlanningMode ? buildAtTime() : undefined;
-      // ── On charge désormais TOUTES les villes globalement (pas de filtre `city`).
-      // Le tri 4-niveaux côté frontend s'occupe de l'affichage par proximité.
-      const params: any = { limit: 1000 };
+
+      // ── Pagination bbox stricte : on N'EXIGE PAS de bbox au tout 1er render
+      // (le moveend du Mapbox arrivera dans <600ms après le mapReady), mais
+      // dès qu'on en a un, on ne charge que dans cette zone et max 200.
+      // Si le bbox est trop large (zoom dezoomé France entière), on skip.
+      const MAX_BBOX_SPAN_DEG = 0.5; // ≈55 km côté max — sinon "Zoomez"
+      let tooFar = false;
+      if (mapBbox) {
+        const spanLat = mapBbox.lat_max - mapBbox.lat_min;
+        const spanLng = mapBbox.lng_max - mapBbox.lng_min;
+        if (spanLat > MAX_BBOX_SPAN_DEG || spanLng > MAX_BBOX_SPAN_DEG) {
+          tooFar = true;
+          console.log(`[map.loadData] ⚠️  bbox too wide (spanLat=${spanLat.toFixed(3)}, spanLng=${spanLng.toFixed(3)}) → user must zoom in`);
+        }
+      }
+      setTooFarZoomedOut(tooFar);
+      if (tooFar) {
+        setTerraces([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
+      const params: any = { limit: 200 };
       if (typeFilter !== 'all') params.type = typeFilter;
       if (atTime) params.at_time = atTime;
-      // Bounding box optionnel : limite si l'utilisateur est zoomé
       if (mapBbox) {
         params.lat_min = mapBbox.lat_min;
         params.lat_max = mapBbox.lat_max;
@@ -470,7 +491,7 @@ export default function MapScreen() {
         api.getWeather(city).catch(() => null),
       ]);
       console.log(
-        `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — ALL CITIES bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
+        `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
       );
       // ── Stats globales + breakdown par ville
       try {
@@ -479,23 +500,8 @@ export default function MapScreen() {
         const soon = all.filter((t) => t.sun_status === 'soon').length;
         const shade = all.filter((t) => t.sun_status === 'shade').length;
         console.log(
-          `[stats] TOTAL: ${all.length} terraces | sunny=${sunny} | soon=${soon} | shade=${shade}`,
+          `[stats] BBOX: ${all.length} terraces | sunny=${sunny} | soon=${soon} | shade=${shade}`,
         );
-        // Per-city breakdown
-        const byCity: Record<string, { total: number; sunny: number; soon: number; shade: number }> = {};
-        all.forEach((t) => {
-          const c = t.city || '?';
-          if (!byCity[c]) byCity[c] = { total: 0, sunny: 0, soon: 0, shade: 0 };
-          byCity[c].total++;
-          if (t.sun_status === 'sunny') byCity[c].sunny++;
-          else if (t.sun_status === 'soon') byCity[c].soon++;
-          else if (t.sun_status === 'shade') byCity[c].shade++;
-        });
-        Object.entries(byCity)
-          .sort((a, b) => b[1].total - a[1].total)
-          .forEach(([c, s]) => {
-            console.log(`[stats]   ${c}: ${s.total} (sunny=${s.sunny}, soon=${s.soon}, shade=${s.shade})`);
-          });
       } catch (_e) {}
       setTerraces(terracesRes.terraces);
       setWeather(weatherRes);
@@ -918,12 +924,24 @@ export default function MapScreen() {
               </>
             }
             ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Ionicons name="sad-outline" size={40} color={theme.textTertiary} />
-                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                  Aucune terrasse trouvée avec ces filtres
-                </Text>
-              </View>
+              tooFarZoomedOut ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="search" size={40} color={theme.primary} />
+                  <Text style={[styles.emptyText, { color: theme.text, fontWeight: '600' }]}>
+                    Zoomez pour voir les terrasses
+                  </Text>
+                  <Text style={[styles.emptyText, { color: theme.textSecondary, marginTop: 4 }]}>
+                    Pincez la carte pour explorer une zone plus précise
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.emptyState}>
+                  <Ionicons name="sad-outline" size={40} color={theme.textTertiary} />
+                  <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+                    Aucune terrasse trouvée avec ces filtres
+                  </Text>
+                </View>
+              )
             }
             renderItem={({ item }: { item: Terrace }) => (
               <TerraceCard terrace={item} onPress={() => onCardPress(item)} />

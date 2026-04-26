@@ -58,6 +58,7 @@ export default function SunMap({
   polygonsGeoJSON,
   onShadeIdle,
   onSunUpdate,
+  onRegionChange,
 }: Props) {
   const webRef = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -128,6 +129,17 @@ export default function SunMap({
           }
           case 'mapError':
             console.warn('[soleia.web] map error:', data.msg);
+            break;
+          case 'regionChange':
+            if (onRegionChange) {
+              onRegionChange({
+                lat_min: data.lat_min,
+                lat_max: data.lat_max,
+                lng_min: data.lng_min,
+                lng_max: data.lng_max,
+                zoom: data.zoom,
+              });
+            }
             break;
           case 'error':
             console.warn('[soleia.web] error:', data.msg);

@@ -387,6 +387,21 @@ export const MAP_HTML = `<!DOCTYPE html>
       map.on('error', function (ev) {
         postToRN({ type: 'mapError', msg: ev && ev.error ? String(ev.error.message || ev.error) : 'unknown' });
       });
+
+      // ── Region change : notifie RN du bbox visible (debounce côté RN) ──
+      map.on('moveend', function () {
+        try {
+          var b = map.getBounds();
+          postToRN({
+            type: 'regionChange',
+            lat_min: b.getSouth(),
+            lat_max: b.getNorth(),
+            lng_min: b.getWest(),
+            lng_max: b.getEast(),
+            zoom: map.getZoom(),
+          });
+        } catch (eRC) {}
+      });
     }
 
     // ----- Bridge functions exposed to React Native -------------------------

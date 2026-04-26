@@ -1,0 +1,56 @@
+{
+  "cities": {
+    "Paris": {
+      "fetched": 295,
+      "inserted": 168,
+      "duplicates": 121,
+      "blacklisted": 6
+    },
+    "Lyon": {
+      "fetched": 224,
+      "inserted": 174,
+      "duplicates": 43,
+      "blacklisted": 7
+    },
+    "Marseille": {
+      "fetched": 213,
+      "inserted": 161,
+      "duplicates": 49,
+      "blacklisted": 3
+    },
+    "Bordeaux": {
+      "fetched": 209,
+      "inserted": 154,
+      "duplicates": 49,
+      "blacklisted": 6
+    },
+    "Toulouse": {
+      "fetched": 208,
+      "inserted": 145,
+      "duplicates": 59,
+      "blacklisted": 4
+    },
+    "Nice": {
+      "fetched": 207,
+      "inserted": 155,
+      "duplicates": 52,
+      "blacklisted": 0
+    },
+    "Nantes": {
+      "fetched": 202,
+      "inserted": 154,
+      "duplicates": 45,
+      "blacklisted": 3
+    },
+    "Montpellier": {
+      "fetched": 204,
+      "inserted": 165,
+      "duplicates": 34,
+      "blacklisted": 5
+    }
+  },
+  "total_inserted": 1276,
+  "total_duplicates": 452,
+  "total_blacklisted": 34,
+  "total_fetched": 1762
+}

@@ -80,7 +80,7 @@ export default function TerraceCard({ terrace, onPress }: Props) {
             {terrace.name}
           </Text>
           <Text style={[styles.rating, { color: '#F5A623' }]}>
-            ★ {terrace.google_rating.toFixed(1)}
+            \u2B50 {terrace.google_rating.toFixed(1)}
             {terrace.google_ratings_count && terrace.google_ratings_count > 0 ? (
               <Text style={styles.ratingCount}> ({terrace.google_ratings_count})</Text>
             ) : null}
