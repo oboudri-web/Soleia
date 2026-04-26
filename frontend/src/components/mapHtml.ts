@@ -134,11 +134,11 @@ export const MAP_HTML = `<!DOCTYPE html>
         container: 'map',
         style: STYLE_URL,
         center: initialCenter || [-1.5536, 47.2184],
-        zoom: initialZoom != null ? initialZoom : 14,
-        pitch: 45,
+        zoom: initialZoom != null ? initialZoom : 17,
+        pitch: 62,
         bearing: 0,
         attributionControl: false,
-        maxPitch: 70,
+        maxPitch: 75,
         antialias: true,
       });
 
@@ -179,6 +179,66 @@ export const MAP_HTML = `<!DOCTYPE html>
           postToRN({ type: 'error', msg: 'layer hide failed: ' + e.message });
         }
 
+        // ─── Bâtiments 3D extrudés (fill-extrusion) — style SunSeekr ──────
+        // Le style streets-v2 de MapTiler suit le schéma OpenMapTiles : la
+        // source 'openmaptiles' contient un source-layer 'building' avec un
+        // attribut `render_height` pour la hauteur réelle du bâtiment et
+        // `render_min_height` pour le sol (utilisé pour les bâtiments perchés).
+        // On injecte une couche fill-extrusion par-dessus en cachant la couche
+        // 'building' 2D par défaut pour éviter le doublon.
+        try {
+          // Cacher le building 2D existant si présent
+          var styleLayers = map.getStyle().layers || [];
+          for (var i2 = 0; i2 < styleLayers.length; i2++) {
+            var l2 = styleLayers[i2];
+            if (l2.id === 'building' || l2.id === 'building-3d') {
+              try { map.setLayoutProperty(l2.id, 'visibility', 'none'); } catch (eHide) {}
+            }
+          }
+
+          // Trouver une couche label sous laquelle insérer (pour que les noms
+          // de rues/villes restent au-dessus des bâtiments).
+          var beforeLayerId = undefined;
+          for (var k = 0; k < styleLayers.length; k++) {
+            var idK = styleLayers[k].id || '';
+            if (idK.indexOf('label') !== -1 || idK.indexOf('-name') !== -1) {
+              beforeLayerId = idK;
+              break;
+            }
+          }
+
+          map.addLayer({
+            id: 'soleia-3d-buildings',
+            source: 'openmaptiles',
+            'source-layer': 'building',
+            type: 'fill-extrusion',
+            minzoom: 14,
+            paint: {
+              'fill-extrusion-color': [
+                'interpolate', ['linear'], ['get', 'render_height'],
+                0, '#e6e2dc',
+                10, '#dcd6cd',
+                30, '#cfc7bb',
+                80, '#b8ad9c',
+              ],
+              'fill-extrusion-height': [
+                'interpolate', ['linear'], ['zoom'],
+                14, 0,
+                15.5, ['get', 'render_height'],
+              ],
+              'fill-extrusion-base': [
+                'interpolate', ['linear'], ['zoom'],
+                14, 0,
+                15.5, ['get', 'render_min_height'],
+              ],
+              'fill-extrusion-opacity': 0.95,
+            },
+          }, beforeLayerId);
+          postToRN({ type: 'buildings3DAdded', beforeLayer: beforeLayerId || 'top' });
+        } catch (eBld) {
+          postToRN({ type: 'error', msg: '3D buildings add failed: ' + eBld.message });
+        }
+
         try {
           if (typeof ShadeMap !== 'undefined') {
             shadeMap = new ShadeMap({
@@ -198,6 +258,35 @@ export const MAP_HTML = `<!DOCTYPE html>
                 getElevation: function (args) {
                   return -10000 + (args.r * 256 * 256 + args.g * 256 + args.b) * 0.1;
                 },
+              },
+              // ─── Projeter les ombres sur les façades + sur les rues ───
+              // ShadeMap utilise getFeatures pour récupérer les polygones de
+              // bâtiments avec leur hauteur. Sans ça, seul le terrain (DEM)
+              // projette des ombres → résultat plat, pas de portées sur les
+              // rues. Avec ça, ShadeMap rend les ombres GPU des façades sur
+              // les routes, façades adjacentes et sur le terrain lui-même.
+              getFeatures: function () {
+                try {
+                  if (!map.getSource('openmaptiles')) return [];
+                  var feats = map.queryRenderedFeatures({
+                    layers: ['soleia-3d-buildings'],
+                  });
+                  // Standardiser l'attribut height pour ShadeMap
+                  return (feats || []).map(function (f) {
+                    var props = f.properties || {};
+                    var h =
+                      props.render_height ||
+                      props.height ||
+                      props.building_height ||
+                      props.levels && (props.levels * 3) ||
+                      8;
+                    return Object.assign({}, f, {
+                      properties: Object.assign({}, props, { height: h }),
+                    });
+                  });
+                } catch (eFeat) {
+                  return [];
+                }
               },
               debug: function (msg) { postToRN({ type: 'shadeLog', msg: String(msg) }); },
             }).addTo(map);
@@ -286,12 +375,12 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 16, pitch: 45, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 62, duration: 800 });
     };
 
     window.setCenter = function (lat, lng, zoom) {
       if (!map) return;
-      map.jumpTo({ center: [lng, lat], zoom: zoom != null ? zoom : 14 });
+      map.jumpTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17 });
     };
 
     window.setShadeOpacity = function (opacity) {

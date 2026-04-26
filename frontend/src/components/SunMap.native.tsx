@@ -115,6 +115,11 @@ export default function SunMap({
             `[soleia.web] hidden ${data.count}/${data.total} POI/transit layers`,
           );
           break;
+        case 'buildings3DAdded':
+          console.log(
+            `[soleia.web] ✅ 3D buildings layer added (before='${data.beforeLayer}')`,
+          );
+          break;
         case 'terracesAck':
           console.log(`[soleia.web] terracesAck count=${data.count}`);
           break;
