@@ -86,6 +86,19 @@ export default function SunMap({
     try {
       const data = JSON.parse(ev.nativeEvent.data);
       switch (data.type) {
+        case 'cssInjected':
+          console.log(`[soleia.web] css injected (${data.size} bytes)`);
+          break;
+        case 'maplibreInjected':
+          console.log(
+            `[soleia.web] maplibre injected (${data.size} bytes, hasGlobal=${data.hasGlobal})`,
+          );
+          break;
+        case 'shadeMapInjected':
+          console.log(
+            `[soleia.web] shademap injected (${data.size} bytes, hasGlobal=${data.hasGlobal})`,
+          );
+          break;
         case 'htmlLoaded':
           console.log('[soleia.web] HTML loaded');
           break;
@@ -96,6 +109,9 @@ export default function SunMap({
         case 'shadeMapReady':
           console.log('[soleia.web] ✅ ShadeMap ready');
           setShadeReady(true);
+          break;
+        case 'terracesAck':
+          console.log(`[soleia.web] terracesAck count=${data.count}`);
           break;
         case 'viewport': {
           const v = data as ViewportMessage;
@@ -118,7 +134,7 @@ export default function SunMap({
           console.warn('[soleia.web] error:', data.msg);
           break;
         case 'shadeLog':
-          // Verbose ShadeMap debug — keep silent unless investigating.
+          console.log('[soleia.web.shade]', data.msg);
           break;
         default:
           break;
@@ -128,9 +144,14 @@ export default function SunMap({
     }
   }, [onRegionChange]);
 
-  // ─── Push terraces to the WebView ───────────────────────────────────────
+  // ─── Push terraces (+ optional user dot) to the WebView ────────────────
   useEffect(() => {
-    if (!mapReady || !webRef.current) return;
+    if (!mapReady || !webRef.current) {
+      console.log(
+        `[soleia.rn] skip updateTerraces — mapReady=${mapReady} webRef=${!!webRef.current}`,
+      );
+      return;
+    }
     const slim = terraces
       .filter(
         (t) =>
@@ -145,15 +166,28 @@ export default function SunMap({
         lng: t.lng,
         sun_status: t.sun_status,
       }));
+    if (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number') {
+      slim.push({
+        id: '__user__',
+        lat: userLocation.lat,
+        lng: userLocation.lng,
+        sun_status: 'sunny',
+      } as any);
+    }
     const key = JSON.stringify(slim.map((t) => `${t.id}:${t.sun_status}`));
-    if (key === lastSentTerracesKeyRef.current) return;
+    if (key === lastSentTerracesKeyRef.current) {
+      // No change — nothing to do.
+      return;
+    }
     lastSentTerracesKeyRef.current = key;
     const payload = JSON.stringify(slim);
     webRef.current.injectJavaScript(
-      `try { window.updateTerraces(${payload}); } catch(e){} true;`,
+      `try { window.updateTerraces(${payload}); } catch(e){ window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',msg:'updateTerraces injection failed: '+e.message})); } true;`,
     );
-    console.log(`[soleia.rn] sent ${slim.length} terraces to WebView`);
-  }, [terraces, mapReady]);
+    console.log(
+      `[soleia.rn] sent ${slim.length} points to WebView (terraces=${slim.length - (userLocation ? 1 : 0)} + user=${userLocation ? 1 : 0})`,
+    );
+  }, [terraces, mapReady, userLocation?.lat, userLocation?.lng]);
 
   // ─── Recenter the map when `center` changes (city switch) ──────────────
   useEffect(() => {
@@ -197,37 +231,10 @@ export default function SunMap({
     };
   }, [currentMinutes, shadeReady]);
 
-  // ─── User location overlay (simple blue dot on top of WebView) ─────────
-  // We render it as an RN view positioned at the projected pixel of the user
-  // location. The WebView sends the projected pixel for any [lng,lat] we put
-  // into the terraces list — for the user dot we use a separate strategy:
-  // we send a synthetic point with id='__user__' alongside the terraces.
-  const synthesizedUserPoint = useMemo<ViewportPoint | null>(() => {
-    if (!userLocation) return null;
-    const u = points.find((p) => p.id === '__user__');
-    return u || null;
-  }, [points, userLocation]);
-
-  // Inject the user point into terraces sent to WebView (so it gets projected)
-  useEffect(() => {
-    if (!mapReady || !webRef.current || !userLocation) return;
-    // Only inject after the regular terraces have been pushed.
-    const slim = terraces
-      .filter((t) => typeof t.lat === 'number' && typeof t.lng === 'number')
-      .map((t) => ({ id: t.id, lat: t.lat, lng: t.lng, sun_status: t.sun_status }))
-      .concat([
-        {
-          id: '__user__',
-          lat: userLocation.lat,
-          lng: userLocation.lng,
-          sun_status: 'sunny',
-        } as any,
-      ]);
-    const payload = JSON.stringify(slim);
-    webRef.current.injectJavaScript(
-      `try { window.updateTerraces(${payload}); } catch(e){} true;`,
-    );
-  }, [userLocation?.lat, userLocation?.lng, mapReady]);
+  // ─── User location overlay : a synthetic point with id='__user__' is sent
+  // to the WebView alongside the regular terraces (see effect above), and the
+  // WebView projects its pixel position back to RN via postMessage. We render
+  // it as a blue puck below.
 
   // Map terrace.id → terrace for quick lookup in the marker render loop
   const terracesById = useMemo(() => {

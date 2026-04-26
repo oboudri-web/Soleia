@@ -1,23 +1,37 @@
 /**
  * Soleia — Map HTML as JavaScript string.
  *
- * This is the *exact* contents of /app/frontend/assets/map.html, exported as a
- * string so we can pass it to <WebView source={{ html: MAP_HTML }} />.
+ * The WebView consumes this via <WebView source={{ html: MAP_HTML }} />.
  *
- * Why not load the .html file directly?
- *   • Metro's default `assetExts` doesn't include 'html'.
- *   • We can't edit metro.config.js (protected).
- *   • A static string is fast to bundle, gzipped well, and works offline.
+ * Self-contained — does NOT load anything from CDN. MapLibre GL JS,
+ * MapLibre CSS and ShadeMap (mapbox-gl-shadow-simulator) are inlined as
+ * base64 and decoded in the page via atob() before use. Avoids unpkg/CDN
+ * blockage on iOS production builds (offline behaviour, App Store review).
  *
- * Keep this file in sync with assets/map.html (manually for now).
+ * Network requests at runtime are limited to:
+ *   • MapTiler tiles & style.json
+ *   • MapTiler terrain-rgb-v2 tiles (for ShadeMap elevation)
+ *   • ShadeMap API key validation (api.shademap.app)
  */
+import { MAPLIBREJS_B64 } from './mapLibreJs';
+import { MAPLIBRECSS_B64 } from './mapLibreCss';
+import { SHADEMAPJS_B64 } from './shadeMapJs';
+
+const MAPTILER_KEY = 'PrVP1L26j30UHcrnm87w';
+const SHADEMAP_KEY =
+  'eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Im9ib3VkcmlAZ21haWwuY29tIiwiY3JlYXRlZCI6MTc3NzE5NjQ0NzAwMiwiaWF0IjoxNzc3MTk2NDQ3fQ.Mu6MZW3988d8F4OHMuNQzUllI46EZscid0sFTofwW_o';
+
+// The big inline map page. We use String.raw to avoid backtick-collision with
+// any minified JS that might contain backticks (we still must escape ` and ${
+// in the body — but our body is hand-written so we use plain template here and
+// keep external libs in base64 vars decoded at runtime via atob()).
 export const MAP_HTML = `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Soleia Map</title>
-  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style id="maplibre-css-placeholder"></style>
   <style>
     html, body, #map {
       margin: 0;
@@ -38,14 +52,65 @@ export const MAP_HTML = `<!DOCTYPE html>
 <body>
   <div id="map"></div>
 
-  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <script src="https://unpkg.com/mapbox-gl-shadow-simulator@0.13.0/dist/mapbox-gl-shadow-simulator.umd.min.js"></script>
+  <script>
+    // ─── Inlined libs (base64) ────────────────────────────────────────────
+    var MAPLIBRE_CSS_B64 = "${MAPLIBRECSS_B64}";
+    var MAPLIBRE_JS_B64 = "${MAPLIBREJS_B64}";
+    var SHADEMAP_JS_B64 = "${SHADEMAPJS_B64}";
+
+    // Base64 → string (UTF-8 safe). Modern WKWebView supports atob natively.
+    function b64decode(s) {
+      try {
+        // atob handles ASCII; minified JS is ASCII-only so this is fine.
+        return atob(s);
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function postEarly(payload) {
+      try {
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+        }
+      } catch (e) {}
+    }
+
+    // Inject the MapLibre CSS into the head
+    try {
+      var cssText = b64decode(MAPLIBRE_CSS_B64);
+      var styleEl = document.getElementById('maplibre-css-placeholder');
+      if (styleEl) styleEl.textContent = cssText;
+      postEarly({ type: 'cssInjected', size: cssText.length });
+    } catch (e) {
+      postEarly({ type: 'error', msg: 'css inject failed: ' + e.message });
+    }
+
+    // Eval the MapLibre JS bundle (~800KB)
+    try {
+      var libJs = b64decode(MAPLIBRE_JS_B64);
+      // Use Function constructor instead of eval so it runs in global scope cleanly.
+      (new Function(libJs))();
+      postEarly({ type: 'maplibreInjected', size: libJs.length, hasGlobal: typeof maplibregl !== 'undefined' });
+    } catch (e) {
+      postEarly({ type: 'error', msg: 'maplibre inject failed: ' + e.message });
+    }
+
+    // Eval the ShadeMap UMD bundle (~74KB)
+    try {
+      var shadeJs = b64decode(SHADEMAP_JS_B64);
+      (new Function(shadeJs))();
+      postEarly({ type: 'shadeMapInjected', size: shadeJs.length, hasGlobal: typeof ShadeMap !== 'undefined' });
+    } catch (e) {
+      postEarly({ type: 'error', msg: 'shadeMap inject failed: ' + e.message });
+    }
+  </script>
 
   <script>
-    const MAPTILER_KEY = 'PrVP1L26j30UHcrnm87w';
-    const SHADEMAP_KEY = 'eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Im9ib3VkcmlAZ21haWwuY29tIiwiY3JlYXRlZCI6MTc3NzE5NjQ0NzAwMiwiaWF0IjoxNzc3MTk2NDQ3fQ.Mu6MZW3988d8F4OHMuNQzUllI46EZscid0sFTofwW_o';
-    const STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=' + MAPTILER_KEY;
-    const TERRAIN_URL_TEMPLATE = 'https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=' + MAPTILER_KEY;
+    var MAPTILER_KEY = '${MAPTILER_KEY}';
+    var SHADEMAP_KEY = '${SHADEMAP_KEY}';
+    var STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=' + MAPTILER_KEY;
+    var TERRAIN_URL_TEMPLATE = 'https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=' + MAPTILER_KEY;
 
     function postToRN(payload) {
       try {
@@ -55,12 +120,16 @@ export const MAP_HTML = `<!DOCTYPE html>
       } catch (e) {}
     }
 
-    let map = null;
-    let shadeMap = null;
-    let terraces = [];
-    let viewportPostScheduled = false;
+    var map = null;
+    var shadeMap = null;
+    var terraces = [];
+    var viewportPostScheduled = false;
 
     function initMap(initialCenter, initialZoom) {
+      if (typeof maplibregl === 'undefined') {
+        postToRN({ type: 'error', msg: 'maplibregl global missing — bundle eval failed' });
+        return;
+      }
       map = new maplibregl.Map({
         container: 'map',
         style: STYLE_URL,
@@ -76,7 +145,7 @@ export const MAP_HTML = `<!DOCTYPE html>
       map.touchZoomRotate.enable();
       map.dragRotate.enable();
 
-      map.on('load', () => {
+      map.on('load', function () {
         postToRN({ type: 'mapReady' });
         try {
           if (typeof ShadeMap !== 'undefined') {
@@ -102,7 +171,7 @@ export const MAP_HTML = `<!DOCTYPE html>
             }).addTo(map);
             postToRN({ type: 'shadeMapReady' });
           } else {
-            postToRN({ type: 'error', msg: 'ShadeMap library not loaded' });
+            postToRN({ type: 'error', msg: 'ShadeMap library not loaded (global missing)' });
           }
         } catch (e) {
           postToRN({ type: 'error', msg: 'ShadeMap init failed: ' + (e && e.message ? e.message : String(e)) });
@@ -113,7 +182,7 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'mapError', msg: ev && ev.error ? String(ev.error.message || ev.error) : 'unknown' });
       });
 
-      const scheduleViewportPost = function () {
+      var scheduleViewportPost = function () {
         if (viewportPostScheduled) return;
         viewportPostScheduled = true;
         requestAnimationFrame(function () {
@@ -131,19 +200,20 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     function postViewport() {
       if (!map) return;
-      const c = map.getCenter();
-      const points = terraces
-        .filter(function (t) { return typeof t.lat === 'number' && typeof t.lng === 'number'; })
-        .map(function (t) {
-          const p = map.project([t.lng, t.lat]);
-          return {
-            id: t.id,
-            x: Math.round(p.x),
-            y: Math.round(p.y),
-            sunny: t.sun_status === 'sunny' ? 1 : 0,
-          };
+      var c = map.getCenter();
+      var points = [];
+      for (var i = 0; i < terraces.length; i++) {
+        var t = terraces[i];
+        if (typeof t.lat !== 'number' || typeof t.lng !== 'number') continue;
+        var p = map.project([t.lng, t.lat]);
+        points.push({
+          id: t.id,
+          x: Math.round(p.x),
+          y: Math.round(p.y),
+          sunny: t.sun_status === 'sunny' ? 1 : 0,
         });
-      const b = map.getBounds();
+      }
+      var b = map.getBounds();
       postToRN({
         type: 'viewport',
         center: { lat: c.lat, lng: c.lng },
@@ -163,6 +233,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     window.updateTerraces = function (list) {
       try {
         terraces = Array.isArray(list) ? list : [];
+        postToRN({ type: 'terracesAck', count: terraces.length });
         postViewport();
       } catch (e) {
         postToRN({ type: 'error', msg: 'updateTerraces failed: ' + e.message });
@@ -171,10 +242,11 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     window.setShadeTime = function (input) {
       try {
-        if (!shadeMap) return;
-        const d = typeof input === 'number' ? new Date(input) : new Date(String(input));
+        if (!shadeMap) { postToRN({ type: 'shadeLog', msg: 'setShadeTime ignored — shadeMap not ready' }); return; }
+        var d = typeof input === 'number' ? new Date(input) : new Date(String(input));
         if (isNaN(d.getTime())) return;
         shadeMap.setDate(d);
+        postToRN({ type: 'shadeLog', msg: 'setDate ' + d.toISOString() });
       } catch (e) {
         postToRN({ type: 'error', msg: 'setShadeTime failed: ' + e.message });
       }
@@ -196,8 +268,12 @@ export const MAP_HTML = `<!DOCTYPE html>
     };
 
     document.addEventListener('DOMContentLoaded', function () {
-      initMap();
-      postToRN({ type: 'htmlLoaded' });
+      try {
+        initMap();
+        postToRN({ type: 'htmlLoaded' });
+      } catch (e) {
+        postToRN({ type: 'error', msg: 'initMap threw: ' + e.message });
+      }
     });
   </script>
 </body>
