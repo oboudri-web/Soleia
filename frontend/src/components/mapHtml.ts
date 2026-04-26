@@ -48,17 +48,43 @@ export const MAP_HTML = `<!DOCTYPE html>
     .maplibregl-ctrl-attrib { display: none !important; }
     .maplibregl-ctrl-logo { display: none !important; }
     .soleia-marker {
-      width: 36px;
-      height: 36px;
+      position: relative;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
-      background: #ffffff;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.30);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 16px;
-      transition: border-color 200ms ease, filter 200ms ease, opacity 200ms ease, transform 150ms ease;
+      font-size: 22px;
+      line-height: 1;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+      border: 3px solid #FFFFFF;
+    }
+    .soleia-marker.sunny {
+      background: #F5A623;
+    }
+    .soleia-marker.shadow {
+      background: #4B4B7A;
+    }
+    .soleia-marker .mood {
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+    }
+    .soleia-marker .type-badge {
+      position: absolute;
+      bottom: -4px;
+      left: -4px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      line-height: 1;
     }
     .soleia-marker.selected {
       transform: scale(1.18);
@@ -125,6 +151,8 @@ export const MAP_HTML = `<!DOCTYPE html>
       rooftop: String.fromCodePoint(0x1F307),     // sunset over buildings
     };
     var FALLBACK_ICON = String.fromCodePoint(0x2600, 0xFE0F); // sun
+    var MOOD_SUNNY = String.fromCodePoint(0x1F31E);   // sun with face
+    var MOOD_SHADOW = String.fromCodePoint(0x1F634);  // sleeping face
     // Personalised terrace polygon colors
     var TERRACE_COLORS = {
       garden: '#7CB342',
@@ -153,14 +181,18 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     function buildMarkerEl(terrace, sunny) {
       var el = document.createElement('div');
-      el.className = 'soleia-marker';
-      var color = sunny ? SOLEIA_ORANGE : SOLEIA_GREY;
-      el.style.border = '3px solid ' + color;
-      el.style.filter = sunny ? 'none' : 'brightness(0.75) saturate(0.6)';
-      el.style.opacity = sunny ? '1' : '0.85';
+      el.className = 'soleia-marker ' + (sunny ? 'sunny' : 'shadow');
       var iconKey = (terrace.type || 'cafe').toLowerCase();
-      var icon = ICONS[iconKey] || FALLBACK_ICON;
-      el.textContent = icon;
+      var typeIcon = ICONS[iconKey] || FALLBACK_ICON;
+      var moodIcon = sunny ? MOOD_SUNNY : MOOD_SHADOW;
+      var mood = document.createElement('span');
+      mood.className = 'mood';
+      mood.textContent = moodIcon;
+      el.appendChild(mood);
+      var badge = document.createElement('span');
+      badge.className = 'type-badge';
+      badge.textContent = typeIcon;
+      el.appendChild(badge);
       el.addEventListener('click', function (ev) {
         ev.stopPropagation();
         postToRN({ type: 'markerPress', id: terrace.id });
@@ -172,10 +204,11 @@ export const MAP_HTML = `<!DOCTYPE html>
       if (!entry || !entry.marker) return;
       var el = entry.marker.getElement();
       if (!el) return;
-      var color = entry.sunny ? SOLEIA_ORANGE : SOLEIA_GREY;
-      el.style.border = '3px solid ' + color;
-      el.style.filter = entry.sunny ? 'none' : 'brightness(0.75) saturate(0.6)';
-      el.style.opacity = entry.sunny ? '1' : '0.85';
+      el.classList.remove('sunny');
+      el.classList.remove('shadow');
+      el.classList.add(entry.sunny ? 'sunny' : 'shadow');
+      var moodEl = el.querySelector('.mood');
+      if (moodEl) moodEl.textContent = entry.sunny ? MOOD_SUNNY : MOOD_SHADOW;
       if (entry.terrace.id === selectedId) el.classList.add('selected');
       else el.classList.remove('selected');
     }
@@ -228,8 +261,8 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'error', msg: 'maplibregl global missing' });
         return;
       }
-      // MapTiler Streets - 3D buildings + nice cartography
-      var STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=PrVP1L26j30UHcrnm87w';
+      // CARTO Voyager - free, clean cartography matching SunSeekr exactly
+      var STYLE_URL = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
 
       map = new maplibregl.Map({
         container: 'map',
@@ -298,7 +331,7 @@ export const MAP_HTML = `<!DOCTYPE html>
           // If none of the named layers exist, inject our own building roof
           // by adding a fill layer on top of whichever building source we find.
           if (translatedLayers.length === 0) {
-            var srcCandidates = ['maptiler_planet', 'openmaptiles'];
+            var srcCandidates = ['maptiler_planet', 'openmaptiles', 'carto'];
             for (var iS = 0; iS < srcCandidates.length; iS++) {
               if (map.getSource(srcCandidates[iS])) {
                 sourceUsed = srcCandidates[iS];
@@ -411,7 +444,7 @@ export const MAP_HTML = `<!DOCTYPE html>
               getFeatures: function () {
                 return new Promise(function (resolve) {
                   if (!map || !map.loaded()) { resolve([]); return; }
-                  var sources = ['maptiler_planet', 'openmaptiles'];
+                  var sources = ['maptiler_planet', 'openmaptiles', 'carto'];
                   var feats = [];
                   var srcUsed = null;
                   for (var i = 0; i < sources.length; i++) {
