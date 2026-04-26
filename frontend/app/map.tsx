@@ -333,6 +333,31 @@ export default function MapScreen() {
   } | null>(null);
   const bboxDebounceRef = useRef<any>(null);
 
+  // ── Initialisation du bbox dès qu'on a une position (user ou ville par défaut)
+  // pour que la 1ère requête API soit déjà géo-localisée et ne rapatrie pas
+  // 200 terrasses éparpillées dans toute la France.
+  // On re-init quand userLocation arrive (basculement Nantes→Paris) tant que
+  // l'utilisateur n'a pas encore pan/zoomé manuellement (cf. fetchedBboxRef).
+  useEffect(() => {
+    const ref = userLocation || cityCoords;
+    if (!ref || typeof ref.lat !== 'number' || typeof ref.lng !== 'number') return;
+    // Si l'utilisateur a déjà manipulé la carte (fetchedBboxRef set par onRegionChange),
+    // on ne touche plus au bbox automatiquement.
+    if (fetchedBboxRef.current) return;
+    const DELTA = 0.05; // ~5.5 km côté Nord/Sud, ~3.5 km côté Est/Ouest à 47° lat
+    const initial = {
+      lat_min: ref.lat - DELTA,
+      lat_max: ref.lat + DELTA,
+      lng_min: ref.lng - DELTA,
+      lng_max: ref.lng + DELTA,
+    };
+    setMapBbox(initial);
+    console.log(
+      `[map.bbox] ⚡ initial bbox set around ${userLocation ? 'userLocation' : city} (${ref.lat.toFixed(4)}, ${ref.lng.toFixed(4)})`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLocation?.lat, userLocation?.lng, cityCoords.lat, cityCoords.lng]);
+
   // Shadow overlay polygons (fetched from /api/shadows)
   const [shadowPolygons, setShadowPolygons] = useState<Array<Array<[number, number]>>>([]);
   // Flag pour ré-fetch les ombres OSM legacy (désactivé : ShadeMap dans la

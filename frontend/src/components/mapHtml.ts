@@ -435,14 +435,24 @@ export const MAP_HTML = `<!DOCTYPE html>
     /** Push the terraces list to the clustered GeoJSON source. */
     window.updateTerraces = function (list) {
       try {
-        if (!map || !map.getSource('soleia-terraces')) return;
         var arr = Array.isArray(list) ? list : [];
+        // ── DEBUG : trace explicite côté WebView pour diagnostiquer le pipeline RN→WebView
+        console.log('[markers] received ' + arr.length + ' terraces');
+        postToRN({ type: 'terracesReceived', count: arr.length });
+
+        if (!map || !map.getSource('soleia-terraces')) {
+          console.warn('[markers] map or source not ready yet — list cached for later');
+          postToRN({ type: 'error', msg: 'updateTerraces: source not ready (map=' + !!map + ')' });
+          return;
+        }
         var feats = [];
+        var skipped = 0;
         for (var i = 0; i < arr.length; i++) {
           var t = arr[i];
-          if (typeof t.lat !== 'number' || typeof t.lng !== 'number') continue;
+          if (typeof t.lat !== 'number' || typeof t.lng !== 'number') { skipped++; continue; }
           var sunny = t.sun_status === 'sunny' ? 1 : 0;
-          var soonSunny = (t.sun_status === 'soon_sunny' || t.upcoming_sunny) ? 1 : 0;
+          // ── Backend renvoie 'soon' (pas 'soon_sunny'). On accepte les deux pour rétro-compat.
+          var soonSunny = (t.sun_status === 'soon' || t.sun_status === 'soon_sunny' || t.upcoming_sunny) ? 1 : 0;
           feats.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [t.lng, t.lat] },
@@ -455,12 +465,14 @@ export const MAP_HTML = `<!DOCTYPE html>
             },
           });
         }
+        console.log('[markers] features built: ' + feats.length + ' (skipped=' + skipped + '), pushing to source soleia-terraces');
         map.getSource('soleia-terraces').setData({
           type: 'FeatureCollection',
           features: feats,
         });
         postToRN({ type: 'terracesAck', count: feats.length });
       } catch (e) {
+        console.warn('[markers] updateTerraces threw:', e);
         postToRN({ type: 'error', msg: 'updateTerraces failed: ' + e.message });
       }
     };
