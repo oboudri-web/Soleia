@@ -1,25 +1,23 @@
+/* eslint-disable */
 /**
- * Soleia - SunMap (native: WebView + MapLibre GL JS + ShadeMap).
+ * Soleia - SunMap (native: WebView + MapLibre + ShadeMap).
  *
- * Architecture (a la SunSeekr) :
- *   * Une <WebView> plein ecran charge un HTML inline qui rend MapLibre +
- *     ShadeMap (mapbox-gl-shadow-simulator) avec terrain MapTiler.
- *   * Les markers de terrasses sont des <View> RN positionnes en absolu
- *     par-dessus la WebView, repositionnes a chaque viewport change via
- *     map.project() cote HTML qui post un message a RN.
- *   * Le slider d'heure cote RN appelle window.setShadeTime(timestamp) via
- *     injectJavaScript avec un debounce 300ms.
- *
- * Avantages :
- *   * Vraies ombres solaires en temps reel sur tout le terrain (ShadeMap).
- *   * Style MapTiler clair, stable, beau.
- *   * Aucun SDK natif tiers a compiler - pas de crash iOS sur les builds EAS.
- *   * Markers RN gardes (gestures natifs, animations, accessibilite).
+ * Architecture inspired by SunSeekr:
+ *   - Full-screen WebView hosts MapLibre GL JS + ShadeMap with CARTO Voyager
+ *     style and AWS terrarium DEM.
+ *   - Markers are NATIVE MapLibre markers (created in the WebView), not RN
+ *     overlays. This is dramatically more reliable on iOS (no projection
+ *     desync, no layout glitches, gestures fall through naturally).
+ *   - The RN component just owns the WebView and forwards 4 things to it:
+ *       1) the terrace list                  -> window.updateTerraces(...)
+ *       2) the slider time                   -> window.setShadeTime(ts)
+ *       3) the focus coords                  -> window.flyTo(...)
+ *       4) the selected terrace id           -> window.setSelected(id)
+ *     and listens back for marker taps + ShadeMap idle stats + diagnostics.
  */
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, Text } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
-import TerraceMarker from './TerraceMarker';
 import { MAP_HTML } from './mapHtml';
 import type { Terrace } from '../api';
 
@@ -30,8 +28,7 @@ type Props = {
   onMarkerPress: (terrace: Terrace) => void;
   userLocation?: { lat: number; lng: number } | null;
   focusCoords?: { lat: number; lng: number } | null;
-  /** @deprecated kept for parent compat - ShadeMap replaces darkMap */
-  forceDark?: boolean;
+  forceDark?: boolean; // unused (kept for parent API compat)
   onRegionChange?: (bbox: {
     lat_min: number;
     lat_max: number;
@@ -39,29 +36,15 @@ type Props = {
     lng_max: number;
     zoom: number;
   }) => void;
-  /** @deprecated kept for parent compat - ShadeMap replaces backend shadows */
-  shadowPolygons?: Array<Array<[number, number]>>;
-  /** @deprecated kept for parent compat */
-  enableLegacyShadows?: boolean;
-  /** Minutes since 0h (0-1440) bound to ShadeMap.setDate via debounce. */
+  shadowPolygons?: Array<Array<[number, number]>>; // unused
+  enableLegacyShadows?: boolean; // unused
   currentMinutes?: number;
-};
-
-type ViewportPoint = {
-  id: string;
-  x: number; // CSS pixel from top-left of WebView
-  y: number;
-  sunny: number;
-};
-
-type ViewportMessage = {
-  type: 'viewport';
-  center: { lat: number; lng: number };
-  zoom: number;
-  bearing: number;
-  pitch: number;
-  bounds: { lat_min: number; lat_max: number; lng_min: number; lng_max: number };
-  points: ViewportPoint[];
+  /** Optional GeoJSON FeatureCollection of terrace polygons. */
+  polygonsGeoJSON?: any;
+  /** Optional callback fired every ShadeMap idle pass. */
+  onShadeIdle?: (stats: { sunny: number; shaded: number; total: number }) => void;
+  /** Optional callback when ShadeMap reports a per-terrace sun update. */
+  onSunUpdate?: (id: string, sunny: boolean) => void;
 };
 
 export default function SunMap({
@@ -69,99 +52,95 @@ export default function SunMap({
   center,
   selectedId,
   onMarkerPress,
-  userLocation,
   focusCoords,
-  onRegionChange,
   currentMinutes,
+  polygonsGeoJSON,
+  onShadeIdle,
+  onSunUpdate,
 }: Props) {
   const webRef = useRef<WebView>(null);
-  const [points, setPoints] = useState<ViewportPoint[]>([]);
   const [mapReady, setMapReady] = useState(false);
   const [shadeReady, setShadeReady] = useState(false);
   const lastSentTerracesKeyRef = useRef<string>('');
   const shadeDebounceRef = useRef<any>(null);
 
-  // --- Map <-> RN bridge: receive viewport + mapReady + errors -------------
-  const onMessage = useCallback((ev: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(ev.nativeEvent.data);
-      switch (data.type) {
-        case 'cssInjected':
-          console.log(`[soleia.web] css injected (${data.size} bytes)`);
-          break;
-        case 'maplibreInjected':
-          console.log(
-            `[soleia.web] maplibre injected (${data.size} bytes, hasGlobal=${data.hasGlobal})`,
-          );
-          break;
-        case 'shadeMapInjected':
-          console.log(
-            `[soleia.web] shademap injected (${data.size} bytes, hasGlobal=${data.hasGlobal})`,
-          );
-          break;
-        case 'htmlLoaded':
-          console.log('[soleia.web] HTML loaded');
-          break;
-        case 'mapReady':
-          console.log('[soleia.web] [OK] MapLibre ready');
-          setMapReady(true);
-          break;
-        case 'shadeMapReady':
-          console.log('[soleia.web] [OK] ShadeMap ready');
-          setShadeReady(true);
-          break;
-        case 'layersHidden':
-          console.log(
-            `[soleia.web] hidden ${data.count}/${data.total} POI/transit layers`,
-          );
-          break;
-        case 'buildings3DAdded':
-          console.log(
-            `[soleia.web] [OK] 3D buildings layer added (before='${data.beforeLayer}')`,
-          );
-          break;
-        case 'terracesAck':
-          console.log(`[soleia.web] terracesAck count=${data.count}`);
-          break;
-        case 'viewport': {
-          const v = data as ViewportMessage;
-          setPoints(v.points || []);
-          if (onRegionChange) {
-            onRegionChange({
-              lat_min: v.bounds.lat_min,
-              lat_max: v.bounds.lat_max,
-              lng_min: v.bounds.lng_min,
-              lng_max: v.bounds.lng_max,
-              zoom: Math.round(v.zoom),
-            });
+  const onMessage = useCallback(
+    (ev: WebViewMessageEvent) => {
+      try {
+        const data = JSON.parse(ev.nativeEvent.data);
+        switch (data.type) {
+          case 'cssInjected':
+            console.log('[soleia.web] css injected (' + data.size + ' bytes)');
+            break;
+          case 'maplibreInjected':
+            console.log(
+              '[soleia.web] maplibre injected (' + data.size + ' bytes, hasGlobal=' + data.hasGlobal + ')',
+            );
+            break;
+          case 'shadeMapInjected':
+            console.log(
+              '[soleia.web] shademap injected (' + data.size + ' bytes, hasGlobal=' + data.hasGlobal + ')',
+            );
+            break;
+          case 'htmlLoaded':
+            console.log('[soleia.web] HTML loaded');
+            break;
+          case 'styleLoaded':
+            console.log('[soleia.map] style loaded - ' + data.url);
+            break;
+          case 'mapReady':
+            console.log('[soleia.web] [OK] MapLibre ready');
+            setMapReady(true);
+            break;
+          case 'shadeMapReady':
+            console.log('[soleia.shademap] ready - licensed: ' + (data.licensed ? 'true' : 'false'));
+            setShadeReady(true);
+            break;
+          case 'markersAdded':
+            console.log(
+              '[soleia.markers] ' + data.count + ' markers added at zoom ' + data.zoom,
+            );
+            break;
+          case 'polygonsUpdated':
+            console.log('[soleia.polygons] updated count=' + data.count);
+            break;
+          case 'shadeIdle':
+            console.log(
+              '[soleia.shade] idle - updated ' + data.total + ' markers - ' +
+                data.sunny + ' sunny / ' + data.shaded + ' shaded',
+            );
+            if (onShadeIdle) onShadeIdle({ sunny: data.sunny, shaded: data.shaded, total: data.total });
+            break;
+          case 'sunUpdate':
+            if (onSunUpdate) onSunUpdate(data.id, !!data.sunny);
+            break;
+          case 'markerPress': {
+            const t = terraces.find((x) => x.id === data.id);
+            if (t) onMarkerPress(t);
+            break;
           }
-          break;
+          case 'mapError':
+            console.warn('[soleia.web] map error:', data.msg);
+            break;
+          case 'error':
+            console.warn('[soleia.web] error:', data.msg);
+            break;
+          case 'shadeLog':
+            // Verbose - keep silent unless investigating
+            break;
+          default:
+            break;
         }
-        case 'mapError':
-          console.warn('[soleia.web] map error:', data.msg);
-          break;
-        case 'error':
-          console.warn('[soleia.web] error:', data.msg);
-          break;
-        case 'shadeLog':
-          console.log('[soleia.web.shade]', data.msg);
-          break;
-        default:
-          break;
+      } catch (e) {
+        // non-JSON message - ignore
       }
-    } catch (e) {
-      // Non-JSON message - ignore.
-    }
-  }, [onRegionChange]);
+    },
+    [terraces, onMarkerPress, onShadeIdle, onSunUpdate],
+  );
 
-  // --- Push terraces (+ optional user dot) to the WebView ----------------
+  // Push terraces to the WebView whenever they change AND map is ready
   useEffect(() => {
-    if (!mapReady || !webRef.current) {
-      console.log(
-        `[soleia.rn] skip updateTerraces - mapReady=${mapReady} webRef=${!!webRef.current}`,
-      );
-      return;
-    }
+    if (!mapReady || !webRef.current) return;
     const slim = terraces
       .filter(
         (t) =>
@@ -175,48 +154,55 @@ export default function SunMap({
         lat: t.lat,
         lng: t.lng,
         sun_status: t.sun_status,
+        type: (t as any).type || 'cafe',
+        name: t.name,
       }));
-    if (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number') {
-      slim.push({
-        id: '__user__',
-        lat: userLocation.lat,
-        lng: userLocation.lng,
-        sun_status: 'sunny',
-      } as any);
-    }
-    const key = JSON.stringify(slim.map((t) => `${t.id}:${t.sun_status}`));
-    if (key === lastSentTerracesKeyRef.current) {
-      // No change - nothing to do.
-      return;
-    }
+    const key = JSON.stringify(slim.map((t) => t.id + ':' + t.sun_status + ':' + t.type));
+    if (key === lastSentTerracesKeyRef.current) return;
     lastSentTerracesKeyRef.current = key;
     const payload = JSON.stringify(slim);
     webRef.current.injectJavaScript(
-      `try { window.updateTerraces(${payload}); } catch(e){ window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',msg:'updateTerraces injection failed: '+e.message})); } true;`,
+      'try { window.updateTerraces(' + payload + '); } catch(e){} true;',
     );
-    console.log(
-      `[soleia.rn] sent ${slim.length} points to WebView (terraces=${slim.length - (userLocation ? 1 : 0)} + user=${userLocation ? 1 : 0})`,
-    );
-  }, [terraces, mapReady, userLocation?.lat, userLocation?.lng]);
+    console.log('[soleia.rn] sent ' + slim.length + ' terraces to WebView');
+  }, [terraces, mapReady]);
 
-  // --- Recenter the map when 'center' changes (city switch) --------------
+  // Push polygons whenever they change
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const payload = JSON.stringify(polygonsGeoJSON || { type: 'FeatureCollection', features: [] });
+    webRef.current.injectJavaScript(
+      'try { window.updatePolygons(' + payload + '); } catch(e){} true;',
+    );
+  }, [polygonsGeoJSON, mapReady]);
+
+  // Recenter on city change
   useEffect(() => {
     if (!mapReady || !webRef.current) return;
     if (typeof center?.lat !== 'number' || typeof center?.lng !== 'number') return;
     webRef.current.injectJavaScript(
-      `try { window.setCenter(${center.lat}, ${center.lng}, 14); } catch(e){} true;`,
+      'try { window.setCenter(' + center.lat + ', ' + center.lng + ', 15); } catch(e){} true;',
     );
   }, [center?.lat, center?.lng, mapReady]);
 
-  // --- Fly to focusCoords on demand --------------------------------------
+  // Fly to focus coords on demand
   useEffect(() => {
     if (!mapReady || !webRef.current || !focusCoords) return;
     webRef.current.injectJavaScript(
-      `try { window.flyTo(${focusCoords.lat}, ${focusCoords.lng}, 16); } catch(e){} true;`,
+      'try { window.flyTo(' + focusCoords.lat + ', ' + focusCoords.lng + ', 17); } catch(e){} true;',
     );
   }, [focusCoords?.lat, focusCoords?.lng, mapReady]);
 
-  // --- Bind currentMinutes (slider) -> ShadeMap.setDate (debounced 300ms) --
+  // Tell WebView which marker is selected
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const idStr = selectedId ? JSON.stringify(selectedId) : 'null';
+    webRef.current.injectJavaScript(
+      'try { window.setSelected(' + idStr + '); } catch(e){} true;',
+    );
+  }, [selectedId, mapReady]);
+
+  // Bind currentMinutes (slider) -> ShadeMap.setDate (debounced 300ms)
   useEffect(() => {
     if (!shadeReady || !webRef.current || currentMinutes == null) return;
     if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
@@ -233,25 +219,13 @@ export default function SunMap({
       );
       const ts = target.getTime();
       webRef.current?.injectJavaScript(
-        `try { window.setShadeTime(${ts}); } catch(e){} true;`,
+        'try { window.setShadeTime(' + ts + '); } catch(e){} true;',
       );
     }, 300);
     return () => {
       if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
     };
   }, [currentMinutes, shadeReady]);
-
-  // --- User location overlay : a synthetic point with id='__user__' is sent
-  // to the WebView alongside the regular terraces (see effect above), and the
-  // WebView projects its pixel position back to RN via postMessage. We render
-  // it as a blue puck below.
-
-  // Map terrace.id -> terrace for quick lookup in the marker render loop
-  const terracesById = useMemo(() => {
-    const m = new Map<string, Terrace>();
-    for (const t of terraces) m.set(t.id, t);
-    return m;
-  }, [terraces]);
 
   return (
     <View style={styles.container}>
@@ -265,72 +239,17 @@ export default function SunMap({
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
         onMessage={onMessage}
-        // Prevent the WebView from bouncing on iOS (we want pan to feel native)
         bounces={false}
         scrollEnabled={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
-        // iOS perf: disable HW back-forward cache, use modern WKWebView features
-        injectedJavaScriptBeforeContentLoaded={`
-          window.__SOLEIA_RN__ = true;
-          true;
-        `}
-        // Don't block on initial render
+        injectedJavaScriptBeforeContentLoaded={'window.__SOLEIA_RN__ = true; true;'}
         startInLoadingState={false}
-        // Allow WebGL + CDN scripts
         mixedContentMode="always"
         thirdPartyCookiesEnabled
         cacheEnabled
         testID="sun-map-webview"
       />
-
-      {/* Markers overlay - pointerEvents="box-none" lets pan/zoom gestures
-          fall through to the WebView, while individual markers still receive
-          tap events. */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        {points.map((p) => {
-          if (p.id === '__user__') {
-            return (
-              <View
-                key="user-dot"
-                pointerEvents="none"
-                style={[
-                  styles.userDotContainer,
-                  { left: p.x - 12, top: p.y - 12 },
-                ]}
-              >
-                <View style={styles.userDotPulse} />
-                <View style={styles.userDot} />
-              </View>
-            );
-          }
-          const terrace = terracesById.get(p.id);
-          if (!terrace) return null;
-          return (
-            <View
-              key={`m-${p.id}`}
-              pointerEvents="box-none"
-              style={[
-                styles.markerContainer,
-                { left: p.x - 18, top: p.y - 18 },
-              ]}
-            >
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => onMarkerPress(terrace)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <TerraceMarker
-                  terrace={terrace}
-                  selected={selectedId === terrace.id}
-                />
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </View>
-
-      {/* Loading state while MapLibre boots */}
       {!mapReady && (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <Text style={styles.loadingText}>Chargement de la carte...</Text>
@@ -341,40 +260,7 @@ export default function SunMap({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  markerContainer: { position: 'absolute', width: 36, height: 36 },
-  userDotContainer: {
-    position: 'absolute',
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  userDot: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#4285F4',
-    borderWidth: 2,
-    borderColor: '#FFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 1 },
-      },
-      android: { elevation: 4 },
-    }),
-  },
-  userDotPulse: {
-    position: 'absolute',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(66, 133, 244, 0.25)',
-  },
+  container: { flex: 1, backgroundColor: '#f6f3ee' },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
