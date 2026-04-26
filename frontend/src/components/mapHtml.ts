@@ -264,34 +264,29 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'error', msg: 'maplibregl global missing' });
         return;
       }
-      // SunSeekr Voyager style - inlined JSON, public CARTO tiles, no API key
-      var STYLE_URL = 'inline:voyager-sunseekr';
+      // MapTiler Streets - 3D buildings + nice cartography. ShadeMap with
+      // tileSize:514 supports pitch > 45 natively, so we are back on the
+      // perspective view that gives the immersive feel.
+      var STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=PrVP1L26j30UHcrnm87w';
 
       map = new maplibregl.Map({
         container: 'map',
-        style: MAP_STYLE,
+        style: STYLE_URL,
         center: [-1.5536, 47.2184], // Nantes default
         zoom: 15,
         minZoom: 3,
         maxZoom: 20,
-        // SunSeekr-style: strict top-down. ShadeMap only projects shadows
-        // correctly at pitch=0; any tilt breaks the building/shadow alignment
-        // and produces visually wrong results. The 3D illusion comes from
-        // (a) fill-translate on the building roof layer (offsets the top
-        // ~2px south-east, looks like the building has height) and (b) the
-        // ShadeMap shadows themselves projected on the ground next to each
-        // building.
-        pitch: 0,
+        pitch: 45,
         bearing: 0,
         attributionControl: false,
-        maxPitch: 0,
+        maxPitch: 70,
         antialias: true,
       });
 
-      // Disable rotation + pitch gestures - keep top-down locked.
-      try { map.touchZoomRotate.disableRotation(); } catch (e) {}
-      try { map.dragRotate.disable(); } catch (e) {}
-      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
+      // Re-enable rotation + pitch gestures (3D feel)
+      try { map.touchZoomRotate.enable(); } catch (e) {}
+      try { map.dragRotate.enable(); } catch (e) {}
+      try { map.touchPitch && map.touchPitch.enable && map.touchPitch.enable(); } catch (e) {}
 
       map.on('load', function () {
         postToRN({ type: 'styleLoaded', url: STYLE_URL });
@@ -606,7 +601,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     /** Fly the camera to a coordinate. */
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 0, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 45, duration: 800 });
     };
 
     /** Recenter without animation. */
