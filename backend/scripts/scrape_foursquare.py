@@ -91,8 +91,9 @@ FSQ_BASE_URL = "https://places-api.foursquare.com"
 # Taxonomy : `fsq_category_ids` (UUID-style 24-char) — voir
 # https://docs.foursquare.com/data-products/docs/categories
 FSQ_CATEGORY_NAMES_TO_IDS = {
-    # rooftop / bars en hauteur
-    "rooftop_bar":   "4bf58dd8d48988d1bc941735",
+    # rooftop / bars en hauteur (vraies catégories Service API v2025)
+    "rooftop_bar":   "5f2c224bb6d05514c70440a3",   # Rooftop Bar (correct ID)
+    "roof_deck":     "4bf58dd8d48988d133951735",   # Roof Deck (terrasse en hauteur)
     # bars classiques
     "bar":           "4bf58dd8d48988d116941735",
     "cocktail_bar":  "4bf58dd8d48988d11e941735",
@@ -108,7 +109,10 @@ FSQ_CATEGORY_NAMES_TO_IDS = {
 }
 
 FSQ_CATEGORY_GROUPS: Dict[str, List[str]] = {
-    "rooftop": [FSQ_CATEGORY_NAMES_TO_IDS["rooftop_bar"]],
+    "rooftop": [
+        FSQ_CATEGORY_NAMES_TO_IDS["rooftop_bar"],
+        FSQ_CATEGORY_NAMES_TO_IDS["roof_deck"],
+    ],
     "bar": [
         FSQ_CATEGORY_NAMES_TO_IDS["bar"],
         FSQ_CATEGORY_NAMES_TO_IDS["cocktail_bar"],
@@ -264,7 +268,11 @@ def category_to_soleia_type(fsq_categories: List[Dict[str, Any]]) -> str:
     if not fsq_categories:
         return "bar"
     cids = [str(c.get("fsq_category_id") or c.get("id") or "") for c in fsq_categories]
-    if FSQ_CATEGORY_NAMES_TO_IDS["rooftop_bar"] in cids:
+    rooftop_ids = {
+        FSQ_CATEGORY_NAMES_TO_IDS["rooftop_bar"],
+        FSQ_CATEGORY_NAMES_TO_IDS["roof_deck"],
+    }
+    if any(cid in rooftop_ids for cid in cids):
         return "rooftop"
     if any(x in cids for x in FSQ_CATEGORY_GROUPS["bar"]):
         return "bar"

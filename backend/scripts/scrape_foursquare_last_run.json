@@ -1,56 +1,56 @@
 {
   "cities": {
     "Paris": {
-      "fetched": 295,
-      "inserted": 168,
-      "duplicates": 121,
-      "blacklisted": 6
+      "fetched": 93,
+      "inserted": 72,
+      "duplicates": 21,
+      "blacklisted": 0
     },
     "Lyon": {
-      "fetched": 224,
-      "inserted": 174,
-      "duplicates": 43,
-      "blacklisted": 7
+      "fetched": 6,
+      "inserted": 5,
+      "duplicates": 1,
+      "blacklisted": 0
     },
     "Marseille": {
-      "fetched": 213,
-      "inserted": 161,
-      "duplicates": 49,
-      "blacklisted": 3
+      "fetched": 14,
+      "inserted": 10,
+      "duplicates": 4,
+      "blacklisted": 0
     },
     "Bordeaux": {
-      "fetched": 209,
-      "inserted": 154,
-      "duplicates": 49,
-      "blacklisted": 6
+      "fetched": 9,
+      "inserted": 9,
+      "duplicates": 0,
+      "blacklisted": 0
     },
     "Toulouse": {
-      "fetched": 208,
-      "inserted": 145,
-      "duplicates": 59,
-      "blacklisted": 4
+      "fetched": 3,
+      "inserted": 2,
+      "duplicates": 1,
+      "blacklisted": 0
     },
     "Nice": {
-      "fetched": 207,
-      "inserted": 155,
-      "duplicates": 52,
+      "fetched": 17,
+      "inserted": 13,
+      "duplicates": 4,
       "blacklisted": 0
     },
     "Nantes": {
-      "fetched": 202,
-      "inserted": 154,
-      "duplicates": 45,
-      "blacklisted": 3
+      "fetched": 0,
+      "inserted": 0,
+      "duplicates": 0,
+      "blacklisted": 0
     },
     "Montpellier": {
-      "fetched": 204,
-      "inserted": 165,
-      "duplicates": 34,
-      "blacklisted": 5
+      "fetched": 5,
+      "inserted": 4,
+      "duplicates": 1,
+      "blacklisted": 0
     }
   },
-  "total_inserted": 1276,
-  "total_duplicates": 452,
-  "total_blacklisted": 34,
-  "total_fetched": 1762
+  "total_inserted": 115,
+  "total_duplicates": 32,
+  "total_blacklisted": 0,
+  "total_fetched": 147
 }
