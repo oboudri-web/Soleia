@@ -104,6 +104,12 @@ export default function SunMap({
           case 'polygonsUpdated':
             console.log('[soleia.polygons] updated count=' + data.count);
             break;
+          case 'buildingRoofTranslated':
+            console.log(
+              '[soleia.map] building-top fill-translate applied: layers=[' +
+                (data.layers || []).join(',') + '] sourceUsed=' + (data.sourceUsed || 'native'),
+            );
+            break;
           case 'shadeIdle':
             console.log(
               '[soleia.shade] idle - updated ' + data.total + ' markers - ' +

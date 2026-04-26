@@ -211,20 +211,100 @@
         zoom: 15,
         minZoom: 3,
         maxZoom: 20,
-        pitch: 45,
+        // SunSeekr-style: strict top-down. ShadeMap only projects shadows
+        // correctly at pitch=0; any tilt breaks the building/shadow alignment
+        // and produces visually wrong results. The 3D illusion comes from
+        // (a) fill-translate on the building roof layer (offsets the top
+        // ~2px south-east, looks like the building has height) and (b) the
+        // ShadeMap shadows themselves projected on the ground next to each
+        // building.
+        pitch: 0,
         bearing: 0,
         attributionControl: false,
-        maxPitch: 70,
+        maxPitch: 0,
         antialias: true,
       });
 
-      // Keep zoom + rotate gestures, allow pitch (used for the 3D feel)
-      try { map.touchZoomRotate.enable(); } catch (e) {}
-      try { map.dragRotate.enable(); } catch (e) {}
+      // Disable rotation + pitch gestures - keep top-down locked.
+      try { map.touchZoomRotate.disableRotation(); } catch (e) {}
+      try { map.dragRotate.disable(); } catch (e) {}
+      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
 
       map.on('load', function () {
         postToRN({ type: 'styleLoaded', url: STYLE_URL });
         postToRN({ type: 'mapReady' });
+
+        // ----- SunSeekr-style top-down 3D: force fill-translate on building roof
+        // The 3D illusion at pitch=0 comes from the building footprint being
+        // drawn at its real geo position AND a small offset top layer drawn
+        // 2px south-east. This makes each building look like it has a
+        // sliver of side wall visible. ShadeMap then casts a shadow on the
+        // ground next to the same footprint, completing the effect.
+        try {
+          var allLayers = (map.getStyle().layers || []);
+          var layerNames = allLayers.map(function (l) { return l.id; });
+          // Hide any extrusion layer (we are pitch=0 so they look weird)
+          for (var iE = 0; iE < allLayers.length; iE++) {
+            if (allLayers[iE].type === 'fill-extrusion') {
+              try { map.setLayoutProperty(allLayers[iE].id, 'visibility', 'none'); } catch (e1) {}
+            }
+          }
+          // Find candidate building roof layers to translate
+          var candidates = [
+            'building-top', 'building_top', 'building-3d',
+            'building', 'building-roof',
+          ];
+          var translatedLayers = [];
+          var sourceUsed = null;
+          for (var iC = 0; iC < candidates.length; iC++) {
+            var lid = candidates[iC];
+            if (layerNames.indexOf(lid) !== -1) {
+              try {
+                map.setPaintProperty(lid, 'fill-translate', [-2, -2]);
+                map.setPaintProperty(lid, 'fill-translate-anchor', 'viewport');
+                translatedLayers.push(lid);
+              } catch (e2) {
+                postToRN({ type: 'shadeLog', msg: 'fill-translate ' + lid + ' threw: ' + e2.message });
+              }
+            }
+          }
+          // If none of the named layers exist, inject our own building roof
+          // by adding a fill layer on top of whichever building source we find.
+          if (translatedLayers.length === 0) {
+            var srcCandidates = ['maptiler_planet', 'openmaptiles'];
+            for (var iS = 0; iS < srcCandidates.length; iS++) {
+              if (map.getSource(srcCandidates[iS])) {
+                sourceUsed = srcCandidates[iS];
+                try {
+                  map.addLayer({
+                    id: 'soleia-building-top',
+                    source: sourceUsed,
+                    'source-layer': 'building',
+                    type: 'fill',
+                    minzoom: 14,
+                    paint: {
+                      'fill-color': '#f2ece3',
+                      'fill-opacity': 0.95,
+                      'fill-translate': [-2, -2],
+                      'fill-translate-anchor': 'viewport',
+                    },
+                  });
+                  translatedLayers.push('soleia-building-top');
+                } catch (e3) {
+                  postToRN({ type: 'shadeLog', msg: 'addLayer soleia-building-top threw: ' + e3.message });
+                }
+                break;
+              }
+            }
+          }
+          postToRN({
+            type: 'buildingRoofTranslated',
+            layers: translatedLayers,
+            sourceUsed: sourceUsed,
+          });
+        } catch (e) {
+          postToRN({ type: 'error', msg: 'building roof translate failed: ' + e.message });
+        }
 
         // Empty source for terrace polygons (populated later via window.updatePolygons)
         if (!map.getSource('soleia-terraces-polygons')) {
@@ -463,7 +543,7 @@
     /** Fly the camera to a coordinate. */
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 45, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 0, duration: 800 });
     };
 
     /** Recenter without animation. */
