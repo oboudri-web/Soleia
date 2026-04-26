@@ -227,8 +227,8 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'error', msg: 'maplibregl global missing' });
         return;
       }
-      // CARTO Voyager - free style, no API key required
-      var STYLE_URL = 'https://tiles.basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+      // MapTiler Streets - 3D buildings + nice cartography
+      var STYLE_URL = 'https://api.maptiler.com/maps/streets/style.json?key=PrVP1L26j30UHcrnm87w';
 
       map = new maplibregl.Map({
         container: 'map',
@@ -237,16 +237,16 @@ export const MAP_HTML = `<!DOCTYPE html>
         zoom: 15,
         minZoom: 3,
         maxZoom: 20,
-        pitch: 0,
+        pitch: 45,
         bearing: 0,
         attributionControl: false,
+        maxPitch: 70,
         antialias: true,
       });
 
-      // Disable rotation / pitch gestures - we want a stable top-down view
-      try { map.dragRotate.disable(); } catch (e) {}
-      try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
-      try { map.touchZoomRotate.disableRotation(); } catch (e) {}
+      // Keep zoom + rotate gestures, allow pitch (used for the 3D feel)
+      try { map.touchZoomRotate.enable(); } catch (e) {}
+      try { map.dragRotate.enable(); } catch (e) {}
 
       map.on('load', function () {
         postToRN({ type: 'styleLoaded', url: STYLE_URL });
@@ -307,14 +307,15 @@ export const MAP_HTML = `<!DOCTYPE html>
               opacity: 0.7,
               apiKey: SHADEMAP_KEY,
               terrainSource: {
-                tileSize: 256,
-                maxZoom: 15,
+                tileSize: 512,
+                maxZoom: 12,
                 getSourceUrl: function (args) {
-                  return 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/' +
-                    args.z + '/' + args.x + '/' + args.y + '.png';
+                  return 'https://api.maptiler.com/tiles/terrain-rgb-v2/' +
+                    args.z + '/' + args.x + '/' + args.y +
+                    '.webp?key=PrVP1L26j30UHcrnm87w';
                 },
                 getElevation: function (args) {
-                  return (args.r * 256 + args.g + args.b / 256) - 32768;
+                  return -10000 + (args.r * 256 * 256 + args.g * 256 + args.b) * 0.1;
                 },
               },
               belowCanopy: false,
@@ -425,7 +426,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     /** Fly the camera to a coordinate. */
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
-      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 0, duration: 800 });
+      map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 17, pitch: 45, duration: 800 });
     };
 
     /** Recenter without animation. */
