@@ -322,6 +322,51 @@ export const MAP_HTML = `<!DOCTYPE html>
               apiKey: SHADEMAP_KEY,
               belowCanopy: false,
               debug: function (msg) { postToRN({ type: 'shadeLog', msg: String(msg) }); },
+              // Pull building polygons (with height) from the MapTiler vector
+              // tiles so ShadeMap can cast real shadows from facades on the
+              // streets and on each other. Without this, ShadeMap only sees
+              // the DEM terrain and shadows look uniform / nothing on flats.
+              // We try the 2 known source names: 'maptiler_planet' (current
+              // MapTiler streets-v2) and 'openmaptiles' (older / SunSeekr).
+              getFeatures: function () {
+                return new Promise(function (resolve) {
+                  if (!map || !map.loaded()) { resolve([]); return; }
+                  var sources = ['maptiler_planet', 'openmaptiles'];
+                  var feats = [];
+                  var srcUsed = null;
+                  for (var i = 0; i < sources.length; i++) {
+                    if (!map.getSource(sources[i])) continue;
+                    try {
+                      var f = map.querySourceFeatures(sources[i], { sourceLayer: 'building' });
+                      var withHeight = (f || []).filter(function (x) {
+                        return x && x.properties && (x.properties.height || x.properties.render_height);
+                      });
+                      if (withHeight.length > 0) {
+                        feats = withHeight;
+                        srcUsed = sources[i];
+                        break;
+                      }
+                    } catch (e) {
+                      postToRN({ type: 'shadeLog', msg: 'querySourceFeatures(' + sources[i] + ') threw: ' + e.message });
+                    }
+                  }
+                  postToRN({
+                    type: 'shadeLog',
+                    msg: 'getFeatures count=' + feats.length + ' source=' + (srcUsed || 'none'),
+                  });
+                  // Normalise the height attribute so ShadeMap finds it
+                  // regardless of which OpenMapTiles schema variant we got.
+                  var normalised = feats.map(function (f) {
+                    var props = f.properties || {};
+                    var h = props.render_height || props.height ||
+                      (props.levels ? props.levels * 3 : 0) || 8;
+                    return Object.assign({}, f, {
+                      properties: Object.assign({}, props, { height: h }),
+                    });
+                  });
+                  resolve(normalised);
+                });
+              },
             };
             if (!IS_LOCAL) {
               shadeOpts.terrainSource = {
