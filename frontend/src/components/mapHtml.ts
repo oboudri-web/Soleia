@@ -1,17 +1,17 @@
 /**
- * Soleia — Map HTML as JavaScript string.
+ * Soleia - Map HTML as JavaScript string.
  *
  * The WebView consumes this via <WebView source={{ html: MAP_HTML }} />.
  *
- * Self-contained — does NOT load anything from CDN. MapLibre GL JS,
+ * Self-contained - does NOT load anything from CDN. MapLibre GL JS,
  * MapLibre CSS and ShadeMap (mapbox-gl-shadow-simulator) are inlined as
  * base64 and decoded in the page via atob() before use. Avoids unpkg/CDN
  * blockage on iOS production builds (offline behaviour, App Store review).
  *
  * Network requests at runtime are limited to:
- *   • MapTiler tiles & style.json
- *   • MapTiler terrain-rgb-v2 tiles (for ShadeMap elevation)
- *   • ShadeMap API key validation (api.shademap.app)
+ *   * MapTiler tiles & style.json
+ *   * MapTiler terrain-rgb-v2 tiles (for ShadeMap elevation)
+ *   * ShadeMap API key validation (api.shademap.app)
  */
 import { MAPLIBREJS_B64 } from './mapLibreJs';
 import { MAPLIBRECSS_B64 } from './mapLibreCss';
@@ -23,7 +23,7 @@ const SHADEMAP_KEY =
 
 // The big inline map page. We use String.raw to avoid backtick-collision with
 // any minified JS that might contain backticks (we still must escape ` and ${
-// in the body — but our body is hand-written so we use plain template here and
+// in the body - but our body is hand-written so we use plain template here and
 // keep external libs in base64 vars decoded at runtime via atob()).
 export const MAP_HTML = `<!DOCTYPE html>
 <html lang="fr">
@@ -53,12 +53,12 @@ export const MAP_HTML = `<!DOCTYPE html>
   <div id="map"></div>
 
   <script>
-    // ─── Inlined libs (base64) ────────────────────────────────────────────
+    // --- Inlined libs (base64) --------------------------------------------
     var MAPLIBRE_CSS_B64 = "${MAPLIBRECSS_B64}";
     var MAPLIBRE_JS_B64 = "${MAPLIBREJS_B64}";
     var SHADEMAP_JS_B64 = "${SHADEMAPJS_B64}";
 
-    // Base64 → string (UTF-8 safe). Modern WKWebView supports atob natively.
+    // Base64 -> string (UTF-8 safe). Modern WKWebView supports atob natively.
     function b64decode(s) {
       try {
         // atob handles ASCII; minified JS is ASCII-only so this is fine.
@@ -127,7 +127,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     function initMap(initialCenter, initialZoom) {
       if (typeof maplibregl === 'undefined') {
-        postToRN({ type: 'error', msg: 'maplibregl global missing — bundle eval failed' });
+        postToRN({ type: 'error', msg: 'maplibregl global missing - bundle eval failed' });
         return;
       }
       map = new maplibregl.Map({
@@ -135,23 +135,23 @@ export const MAP_HTML = `<!DOCTYPE html>
         style: STYLE_URL,
         center: initialCenter || [-1.5536, 47.2184],
         zoom: initialZoom != null ? initialZoom : 17,
-        // Pitch 0 = vue top-down comme SunSeekr. Les bâtiments restent
-        // extrudés (donc ShadeMap a des hauteurs pour calculer les ombres),
-        // mais on les voit du dessus → on voit les toits beiges + l'ombre
-        // projetée à côté. C'est ce pattern qui crée la 3D *visuelle* sans
-        // perspective. Pitch 3D classique (45-60°) écrase la lecture des
+        // Pitch 0 = vue top-down comme SunSeekr. Les batiments restent
+        // extrudes (donc ShadeMap a des hauteurs pour calculer les ombres),
+        // mais on les voit du dessus -> on voit les toits beiges + l'ombre
+        // projetee a cote. C'est ce pattern qui cree la 3D *visuelle* sans
+        // perspective. Pitch 3D classique (45-60 deg) ecrase la lecture des
         // rues et masque les ombres.
         pitch: 0,
         bearing: 0,
         attributionControl: false,
-        // On limite le pitch max pour empêcher l'utilisateur de basculer en
-        // perspective (geste 2 doigts vertical). Garde la lisibilité top-down.
+        // On limite le pitch max pour empecher l'utilisateur de basculer en
+        // perspective (geste 2 doigts vertical). Garde la lisibilite top-down.
         maxPitch: 0,
         antialias: true,
       });
 
       map.touchZoomRotate.enable();
-      // Désactiver le drag-rotate ET la pitch via 2-doigts vertical → la
+      // Desactiver le drag-rotate ET la pitch via 2-doigts vertical -> la
       // carte reste stricte top-down comme SunSeekr.
       map.dragRotate.disable();
       try { map.touchPitch && map.touchPitch.disable && map.touchPitch.disable(); } catch (e) {}
@@ -159,9 +159,9 @@ export const MAP_HTML = `<!DOCTYPE html>
       map.on('load', function () {
         postToRN({ type: 'mapReady' });
 
-        // ─── Masquer les couches POI/transit pour alléger la carte ────────
-        // Style "Apple Maps" : on garde routes, bâtiments, eau, parcs. Tous
-        // les POI/transit/parkings/airports etc. sont cachés. Les seuls POI
+        // --- Masquer les couches POI/transit pour alleger la carte --------
+        // Style "Apple Maps" : on garde routes, batiments, eau, parcs. Tous
+        // les POI/transit/parkings/airports etc. sont caches. Les seuls POI
         // visibles sur la carte sont nos markers terrasses Soleia.
         try {
           var layersToHide = [
@@ -190,15 +190,15 @@ export const MAP_HTML = `<!DOCTYPE html>
           postToRN({ type: 'error', msg: 'layer hide failed: ' + e.message });
         }
 
-        // ─── Bâtiments 3D extrudés (fill-extrusion) — style SunSeekr ──────
-        // Le style streets-v2 de MapTiler suit le schéma OpenMapTiles : la
+        // --- Batiments 3D extrudes (fill-extrusion) - style SunSeekr ------
+        // Le style streets-v2 de MapTiler suit le schema OpenMapTiles : la
         // source 'openmaptiles' contient un source-layer 'building' avec un
-        // attribut `render_height` pour la hauteur réelle du bâtiment et
-        // `render_min_height` pour le sol (utilisé pour les bâtiments perchés).
+        // attribut `render_height` pour la hauteur reelle du batiment et
+        // `render_min_height` pour le sol (utilise pour les batiments perches).
         // On injecte une couche fill-extrusion par-dessus en cachant la couche
-        // 'building' 2D par défaut pour éviter le doublon.
+        // 'building' 2D par defaut pour eviter le doublon.
         try {
-          // Cacher le building 2D existant si présent
+          // Cacher le building 2D existant si present
           var styleLayers = map.getStyle().layers || [];
           for (var i2 = 0; i2 < styleLayers.length; i2++) {
             var l2 = styleLayers[i2];
@@ -207,8 +207,8 @@ export const MAP_HTML = `<!DOCTYPE html>
             }
           }
 
-          // Trouver une couche label sous laquelle insérer (pour que les noms
-          // de rues/villes restent au-dessus des bâtiments).
+          // Trouver une couche label sous laquelle inserer (pour que les noms
+          // de rues/villes restent au-dessus des batiments).
           var beforeLayerId = undefined;
           for (var k = 0; k < styleLayers.length; k++) {
             var idK = styleLayers[k].id || '';
@@ -225,8 +225,8 @@ export const MAP_HTML = `<!DOCTYPE html>
             type: 'fill-extrusion',
             minzoom: 14,
             paint: {
-              // Couleur uniforme beige clair façon SunSeekr — tous les toits
-              // ont la même couleur (vu top-down, pas de gradient).
+              // Couleur uniforme beige clair facon SunSeekr - tous les toits
+              // ont la meme couleur (vu top-down, pas de gradient).
               'fill-extrusion-color': '#f0e6d6',
               'fill-extrusion-height': [
                 'interpolate', ['linear'], ['zoom'],
@@ -250,8 +250,8 @@ export const MAP_HTML = `<!DOCTYPE html>
           if (typeof ShadeMap !== 'undefined') {
             shadeMap = new ShadeMap({
               date: new Date(),
-              // Gris-bleuté façon SunSeekr (au lieu de bleu nuit #01112f).
-              // L'œil lit ça comme une vraie ombre projetée, pas comme un
+              // Gris-bleute facon SunSeekr (au lieu de bleu nuit #01112f).
+              // L'oeil lit ca comme une vraie ombre projetee, pas comme un
               // voile bleu sur la carte.
               color: '#3a4252',
               opacity: 0.55,
@@ -269,12 +269,12 @@ export const MAP_HTML = `<!DOCTYPE html>
                   return -10000 + (args.r * 256 * 256 + args.g * 256 + args.b) * 0.1;
                 },
               },
-              // ─── Projeter les ombres sur les façades + sur les rues ───
-              // ShadeMap utilise getFeatures pour récupérer les polygones de
-              // bâtiments avec leur hauteur. Sans ça, seul le terrain (DEM)
-              // projette des ombres → résultat plat, pas de portées sur les
-              // rues. Avec ça, ShadeMap rend les ombres GPU des façades sur
-              // les routes, façades adjacentes et sur le terrain lui-même.
+              // --- Projeter les ombres sur les facades + sur les rues ---
+              // ShadeMap utilise getFeatures pour recuperer les polygones de
+              // batiments avec leur hauteur. Sans ca, seul le terrain (DEM)
+              // projette des ombres -> resultat plat, pas de portees sur les
+              // rues. Avec ca, ShadeMap rend les ombres GPU des facades sur
+              // les routes, facades adjacentes et sur le terrain lui-meme.
               getFeatures: function () {
                 try {
                   if (!map.getSource('openmaptiles')) return [];
@@ -373,7 +373,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     window.setShadeTime = function (input) {
       try {
-        if (!shadeMap) { postToRN({ type: 'shadeLog', msg: 'setShadeTime ignored — shadeMap not ready' }); return; }
+        if (!shadeMap) { postToRN({ type: 'shadeLog', msg: 'setShadeTime ignored - shadeMap not ready' }); return; }
         var d = typeof input === 'number' ? new Date(input) : new Date(String(input));
         if (isNaN(d.getTime())) return;
         shadeMap.setDate(d);
