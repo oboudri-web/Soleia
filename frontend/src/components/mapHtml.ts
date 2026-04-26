@@ -325,7 +325,7 @@ export const MAP_HTML = `<!DOCTYPE html>
             };
             if (!IS_LOCAL) {
               shadeOpts.terrainSource = {
-                tileSize: 512,
+                tileSize: 256,
                 maxZoom: 12,
                 getSourceUrl: function (args) {
                   return 'https://api.maptiler.com/tiles/terrain-rgb-v2/' +
