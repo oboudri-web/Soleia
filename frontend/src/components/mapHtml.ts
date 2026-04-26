@@ -21,6 +21,7 @@
 import { MAPLIBREJS_B64 } from './mapLibreJs';
 import { MAPLIBRECSS_B64 } from './mapLibreCss';
 import { SHADEMAPJS_B64 } from './shadeMapJs';
+import { MAP_STYLE_JSON } from './mapStyleJson';
 
 const SHADEMAP_KEY =
   'eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6Im9ib3VkcmlAZ21haWwuY29tIiwiY3JlYXRlZCI6MTc3NzE5NjQ0NzAwMiwiaWF0IjoxNzc3MTk2NDQ3fQ.Mu6MZW3988d8F4OHMuNQzUllI46EZscid0sFTofwW_o';
@@ -99,6 +100,8 @@ export const MAP_HTML = `<!DOCTYPE html>
     var MAPLIBRE_CSS_B64 = "${MAPLIBRECSS_B64}";
     var MAPLIBRE_JS_B64 = "${MAPLIBREJS_B64}";
     var SHADEMAP_JS_B64 = "${SHADEMAPJS_B64}";
+    // Inlined Voyager Sunseekr style (no API key, public CARTO tiles).
+    var MAP_STYLE = ${MAP_STYLE_JSON};
 
     function b64decode(s) { try { return atob(s); } catch (e) { return ''; } }
     function postEarly(p) {
@@ -261,12 +264,12 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'error', msg: 'maplibregl global missing' });
         return;
       }
-      // CARTO Voyager - free, clean cartography matching SunSeekr exactly
-      var STYLE_URL = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+      // SunSeekr Voyager style - inlined JSON, public CARTO tiles, no API key
+      var STYLE_URL = 'inline:voyager-sunseekr';
 
       map = new maplibregl.Map({
         container: 'map',
-        style: STYLE_URL,
+        style: MAP_STYLE,
         center: [-1.5536, 47.2184], // Nantes default
         zoom: 15,
         minZoom: 3,
