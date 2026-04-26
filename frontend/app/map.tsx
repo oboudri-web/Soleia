@@ -273,10 +273,9 @@ export default function MapScreen() {
 
   // Shadow overlay polygons (fetched from /api/shadows)
   const [shadowPolygons, setShadowPolygons] = useState<Array<Array<[number, number]>>>([]);
-  // Flag pour réactiver les ombres OSM legacy si jamais Mapbox vector tiles
-  // ratent des bâtiments (mettre à `true` + repasser `enableLegacyShadows={true}`
-  // sur <SunMap/> pour voir les polygones gris en overlay).
-  const ENABLE_LEGACY_SHADOWS = true;
+  // Flag pour ré-fetch les ombres OSM legacy (désactivé : ShadeMap dans la
+  // WebView remplace tout le shadow engine backend).
+  const ENABLE_LEGACY_SHADOWS = false;
   const shadowFetchCtrlRef = useRef<AbortController | null>(null);
 
   // Fetch shadow overlay whenever bbox or at_time changes.

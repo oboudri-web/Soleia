@@ -67,13 +67,6 @@
         }
       ],
       [
-        "@rnmapbox/maps",
-        {
-          "RNMapboxMapsImpl": "mapbox",
-          "RNMapboxMapsDownloadToken": "sk.eyJ1Ijoib2lsaWQiLCJhIjoiY21vY3c5Znc0MDNmaDJycXZtcjAyanM0bCJ9.Zb9lgnbwEhpAkqWepxDmkw"
-        }
-      ],
-      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-image.png",

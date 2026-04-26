@@ -1,57 +1,27 @@
 /**
- * Soleia — SunMap (native: Mapbox GL via @rnmapbox/maps).
+ * Soleia — SunMap (native: WebView + MapLibre GL JS + ShadeMap).
  *
- * Migrated from Google Maps (react-native-maps + PROVIDER_GOOGLE) to Mapbox :
- *  - bâtiments 3D extrudés natifs via FillExtrusionLayer sur `composite` source
- *  - markers React custom via MarkerView
- *  - polygones d'ombre via ShapeSource + FillLayer (support rgba propre)
- *  - styles dark/light natifs Mapbox
- *  - clustering via supercluster (calcul JS, rendu via MarkerView)
+ * Architecture (à la SunSeekr) :
+ *   • Une <WebView> plein écran charge un HTML inline qui rend MapLibre +
+ *     ShadeMap (mapbox-gl-shadow-simulator) avec terrain MapTiler.
+ *   • Les markers de terrasses sont des <View> RN positionnés en absolu
+ *     par-dessus la WebView, repositionnés à chaque viewport change via
+ *     map.project() côté HTML qui post un message à RN.
+ *   • Le slider d'heure côté RN appelle window.setShadeTime(timestamp) via
+ *     injectJavaScript avec un debounce 300ms.
+ *
+ * Avantages :
+ *   • Vraies ombres solaires en temps réel sur tout le terrain (ShadeMap).
+ *   • Style MapTiler clair, stable, beau.
+ *   • Aucun SDK natif tiers à compiler — pas de crash iOS sur les builds EAS.
+ *   • Markers RN gardés (gestures natifs, animations, accessibilité).
  */
-import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import Mapbox, {
-  MapView,
-  Camera,
-  MarkerView,
-  ShapeSource,
-  FillLayer,
-  LineLayer,
-  CircleLayer,
-  StyleURL,
-  UserLocation,
-} from '@rnmapbox/maps';
-import Supercluster from 'supercluster';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { View, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import TerraceMarker from './TerraceMarker';
-import { useTheme } from '../ThemeContext';
+import { MAP_HTML } from './mapHtml';
 import type { Terrace } from '../api';
-
-// ─── Token d'accès public Mapbox (runtime, sécurisable par domaine) ───────────
-// Fallback hardcodé : un pk.* est public par design, sa sécurité passe par les
-// URL/bundle restrictions côté Mapbox. On le hardcode pour garantir l'init même
-// si EAS ne propage pas la variable EXPO_PUBLIC_* au runtime du bundle JS iOS.
-const MAPBOX_TOKEN_FALLBACK = ''; // Mettre votre pk.* Mapbox ici si vous voulez un fallback hardcodé
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || MAPBOX_TOKEN_FALLBACK;
-
-console.log(
-  `[mapbox] init — token=${MAPBOX_TOKEN ? MAPBOX_TOKEN.slice(0, 12) + '…(' + MAPBOX_TOKEN.length + ')' : 'MISSING'}, source=${process.env.EXPO_PUBLIC_MAPBOX_TOKEN ? 'env' : 'fallback'}`,
-);
-
-try {
-  Mapbox.setAccessToken(MAPBOX_TOKEN);
-  // Désactive la télémétrie : sur iOS, le ping initial peut bloquer le rendu si
-  // pas de réseau ou si Mapbox events.mapbox.com est joignable lentement.
-  if (typeof (Mapbox as any).setTelemetryEnabled === 'function') {
-    (Mapbox as any).setTelemetryEnabled(false);
-  }
-  // Indique explicitement qu'on utilise les serveurs Mapbox (pas MapLibre).
-  if (typeof (Mapbox as any).setWellKnownTileServer === 'function') {
-    (Mapbox as any).setWellKnownTileServer('Mapbox');
-  }
-  console.log('[mapbox] init OK');
-} catch (e) {
-  console.error('[mapbox] init FAILED:', e);
-}
 
 type Props = {
   terraces: Terrace[];
@@ -60,6 +30,7 @@ type Props = {
   onMarkerPress: (terrace: Terrace) => void;
   userLocation?: { lat: number; lng: number } | null;
   focusCoords?: { lat: number; lng: number } | null;
+  /** @deprecated kept for parent compat — ShadeMap replaces darkMap */
   forceDark?: boolean;
   onRegionChange?: (bbox: {
     lat_min: number;
@@ -68,30 +39,30 @@ type Props = {
     lng_max: number;
     zoom: number;
   }) => void;
-  /** Polygones d'ombres legacy (OSM custom). Désactivés par défaut depuis qu'on
-   *  utilise le directional light natif de Mapbox Standard v12. Réactivable via
-   *  `enableLegacyShadows={true}` si on détecte des bâtiments OSM absents des
-   *  tiles vectorielles Mapbox. */
+  /** @deprecated kept for parent compat — ShadeMap replaces backend shadows */
   shadowPolygons?: Array<Array<[number, number]>>;
+  /** @deprecated kept for parent compat */
   enableLegacyShadows?: boolean;
-  /** Minutes depuis 0h (0–1440) pilotant le preset lumineux Mapbox.
-   *  Le slider d'heure update cette prop → le directional light bouge → les
-   *  ombres natives sur les bâtiments 3D suivent en temps réel. */
+  /** Minutes since 0h (0–1440) bound to ShadeMap.setDate via debounce. */
   currentMinutes?: number;
 };
 
-// Convertit une bbox Mapbox (ne, sw) en notre format {lat_min,lat_max,...,zoom}
-function buildBbox(bounds: number[][], zoom: number) {
-  // bounds = [[neLng, neLat], [swLng, swLat]]
-  const [ne, sw] = bounds;
-  return {
-    lat_min: Math.min(ne[1], sw[1]),
-    lat_max: Math.max(ne[1], sw[1]),
-    lng_min: Math.min(ne[0], sw[0]),
-    lng_max: Math.max(ne[0], sw[0]),
-    zoom: Math.round(zoom),
-  };
-}
+type ViewportPoint = {
+  id: string;
+  x: number; // CSS pixel from top-left of WebView
+  y: number;
+  sunny: number;
+};
+
+type ViewportMessage = {
+  type: 'viewport';
+  center: { lat: number; lng: number };
+  zoom: number;
+  bearing: number;
+  pitch: number;
+  bounds: { lat_min: number; lat_max: number; lng_min: number; lng_max: number };
+  points: ViewportPoint[];
+};
 
 export default function SunMap({
   terraces,
@@ -100,367 +71,297 @@ export default function SunMap({
   onMarkerPress,
   userLocation,
   focusCoords,
-  forceDark,
   onRegionChange,
-  shadowPolygons,
-  enableLegacyShadows = false,
   currentMinutes,
 }: Props) {
-  const { isDark } = useTheme();
-  const darkMap = forceDark ?? isDark;
-  // Style Mapbox Streets v12 — toujours clair, stable, contient nativement :
-  //   • bâtiments 3D extrudés (couche `building` avec fill-extrusion à zoom ≥15)
-  //   • routes hierarchiques propres
-  //   • POI labels intégrés
-  // Pas de lightPreset, pas de setStyleImportConfigProperty → zéro surface de
-  // bug iOS (le black screen venait de là).
-  const styleURL = 'mapbox://styles/mapbox/streets-v12';
-  console.log(`[mapbox.style] using fixed styleURL='${styleURL}' (darkMap=${darkMap}, ignored)`);
+  const webRef = useRef<WebView>(null);
+  const [points, setPoints] = useState<ViewportPoint[]>([]);
+  const [mapReady, setMapReady] = useState(false);
+  const [shadeReady, setShadeReady] = useState(false);
+  const lastSentTerracesKeyRef = useRef<string>('');
+  const shadeDebounceRef = useRef<any>(null);
 
-  const mapRef = useRef<MapView>(null);
-  const cameraRef = useRef<Camera>(null);
-
-  const [currentZoom, setCurrentZoom] = useState(14);
-  const [currentBbox, setCurrentBbox] = useState<{
-    lat_min: number; lat_max: number; lng_min: number; lng_max: number;
-  }>({
-    lat_min: center.lat - 0.02,
-    lat_max: center.lat + 0.02,
-    lng_min: center.lng - 0.02,
-    lng_max: center.lng + 0.02,
-  });
-
-  // Fly to focusCoords when it changes
-  useEffect(() => {
-    if (focusCoords && cameraRef.current) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [focusCoords.lng, focusCoords.lat],
-        zoomLevel: 16,
-        pitch: 45,
-        animationDuration: 800,
-      });
-    }
-  }, [focusCoords?.lat, focusCoords?.lng]);
-
-  // Diagnostic log — polygones d'ombre
-  useEffect(() => {
-    const count = shadowPolygons?.length ?? 0;
-    if (count > 0) {
-      console.log(
-        `[shadows.render] ✅ ${count} FillLayer features — first has ${shadowPolygons![0].length} points, e.g. ${JSON.stringify(shadowPolygons![0][0])}`,
-      );
-    } else {
-      console.log('[shadows.render] 0 polygons to render (array empty)');
-    }
-  }, [shadowPolygons]);
-
-  // Note: `currentMinutes` prop est conservée pour compatibilité mais n'est
-  // plus utilisée ici. Le système lightPreset (dawn/day/dusk/night) a été
-  // entièrement supprimé pour éliminer les black screens iOS. Les ombres
-  // calculées par notre backend (Suncalc + Douglas-Peucker) restent affichées
-  // si `enableLegacyShadows={true}` est passé en prop (sinon carte propre).
-
-  // Diagnostic log — count des terraces reçues
-  useEffect(() => {
-    console.log(
-      `[mapbox.markers] received ${terraces.length} terraces from parent — first=${terraces[0] ? `${terraces[0].name}@${terraces[0].lat},${terraces[0].lng}` : 'none'}`,
-    );
-  }, [terraces.length]);
-
-  // FeatureCollection de TOUS les terraces — utilisé par le CircleLayer natif
-  // (rendu garanti, ne dépend pas de MarkerView qui peut bugger sur iOS).
-  const terracesFeatureCollection = useMemo(
-    () => ({
-      type: 'FeatureCollection' as const,
-      features: terraces
-        .filter(
-          (t) =>
-            typeof t.lat === 'number' &&
-            typeof t.lng === 'number' &&
-            !isNaN(t.lat) &&
-            !isNaN(t.lng),
-        )
-        .map((t) => ({
-          type: 'Feature' as const,
-          id: t.id,
-          geometry: { type: 'Point' as const, coordinates: [t.lng, t.lat] },
-          properties: {
-            id: t.id,
-            sunny: t.sun_status === 'sunny' ? 1 : 0,
-            selected: selectedId === t.id ? 1 : 0,
-          },
-        })),
-    }),
-    [terraces, selectedId],
-  );
-
-  // Supercluster pour les markers
-  const clusterIndex = useMemo(() => {
-    const idx = new Supercluster({ radius: 50, maxZoom: 16, minPoints: 3 });
-    idx.load(
-      terraces.map((t) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [t.lng, t.lat] },
-        properties: {
-          id: t.id,
-          sunny: t.sun_status === 'sunny' ? 1 : 0,
-          terrace: t,
-        },
-      })),
-    );
-    return idx;
-  }, [terraces]);
-
-  const clusters = useMemo(() => {
-    const { lng_min, lat_min, lng_max, lat_max } = currentBbox;
-    return clusterIndex.getClusters(
-      [lng_min, lat_min, lng_max, lat_max],
-      currentZoom,
-    );
-  }, [clusterIndex, currentBbox, currentZoom]);
-
-  // Shadow polygons → FeatureCollection GeoJSON
-  const shadowFeatureCollection = useMemo(() => {
-    if (!shadowPolygons || shadowPolygons.length === 0) {
-      return { type: 'FeatureCollection' as const, features: [] };
-    }
-    return {
-      type: 'FeatureCollection' as const,
-      features: shadowPolygons.map((poly, idx) => ({
-        type: 'Feature' as const,
-        id: idx,
-        geometry: {
-          type: 'Polygon' as const,
-          // Mapbox utilise [lng, lat], notre backend retourne [lat, lng]
-          coordinates: [poly.map(([lat, lng]) => [lng, lat] as [number, number])],
-        },
-        properties: {},
-      })),
-    };
-  }, [shadowPolygons]);
-
-  const onCameraChanged = useCallback(
-    async (state: any) => {
-      try {
-        const zoom = state.properties?.zoom ?? 14;
-        setCurrentZoom(Math.round(zoom));
-        if (mapRef.current) {
-          const bounds = await mapRef.current.getVisibleBounds();
-          const bbox = buildBbox(bounds, zoom);
-          setCurrentBbox({
-            lat_min: bbox.lat_min,
-            lat_max: bbox.lat_max,
-            lng_min: bbox.lng_min,
-            lng_max: bbox.lng_max,
-          });
-          onRegionChange?.(bbox);
+  // ─── Map ↔ RN bridge: receive viewport + mapReady + errors ─────────────
+  const onMessage = useCallback((ev: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(ev.nativeEvent.data);
+      switch (data.type) {
+        case 'htmlLoaded':
+          console.log('[soleia.web] HTML loaded');
+          break;
+        case 'mapReady':
+          console.log('[soleia.web] ✅ MapLibre ready');
+          setMapReady(true);
+          break;
+        case 'shadeMapReady':
+          console.log('[soleia.web] ✅ ShadeMap ready');
+          setShadeReady(true);
+          break;
+        case 'viewport': {
+          const v = data as ViewportMessage;
+          setPoints(v.points || []);
+          if (onRegionChange) {
+            onRegionChange({
+              lat_min: v.bounds.lat_min,
+              lat_max: v.bounds.lat_max,
+              lng_min: v.bounds.lng_min,
+              lng_max: v.bounds.lng_max,
+              zoom: Math.round(v.zoom),
+            });
+          }
+          break;
         }
-      } catch (e) {
-        // ignore
+        case 'mapError':
+          console.warn('[soleia.web] map error:', data.msg);
+          break;
+        case 'error':
+          console.warn('[soleia.web] error:', data.msg);
+          break;
+        case 'shadeLog':
+          // Verbose ShadeMap debug — keep silent unless investigating.
+          break;
+        default:
+          break;
       }
-    },
-    [onRegionChange],
-  );
+    } catch (e) {
+      // Non-JSON message — ignore.
+    }
+  }, [onRegionChange]);
+
+  // ─── Push terraces to the WebView ───────────────────────────────────────
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const slim = terraces
+      .filter(
+        (t) =>
+          typeof t.lat === 'number' &&
+          typeof t.lng === 'number' &&
+          !isNaN(t.lat) &&
+          !isNaN(t.lng),
+      )
+      .map((t) => ({
+        id: t.id,
+        lat: t.lat,
+        lng: t.lng,
+        sun_status: t.sun_status,
+      }));
+    const key = JSON.stringify(slim.map((t) => `${t.id}:${t.sun_status}`));
+    if (key === lastSentTerracesKeyRef.current) return;
+    lastSentTerracesKeyRef.current = key;
+    const payload = JSON.stringify(slim);
+    webRef.current.injectJavaScript(
+      `try { window.updateTerraces(${payload}); } catch(e){} true;`,
+    );
+    console.log(`[soleia.rn] sent ${slim.length} terraces to WebView`);
+  }, [terraces, mapReady]);
+
+  // ─── Recenter the map when `center` changes (city switch) ──────────────
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    if (typeof center?.lat !== 'number' || typeof center?.lng !== 'number') return;
+    webRef.current.injectJavaScript(
+      `try { window.setCenter(${center.lat}, ${center.lng}, 14); } catch(e){} true;`,
+    );
+  }, [center?.lat, center?.lng, mapReady]);
+
+  // ─── Fly to focusCoords on demand ──────────────────────────────────────
+  useEffect(() => {
+    if (!mapReady || !webRef.current || !focusCoords) return;
+    webRef.current.injectJavaScript(
+      `try { window.flyTo(${focusCoords.lat}, ${focusCoords.lng}, 16); } catch(e){} true;`,
+    );
+  }, [focusCoords?.lat, focusCoords?.lng, mapReady]);
+
+  // ─── Bind currentMinutes (slider) → ShadeMap.setDate (debounced 300ms) ──
+  useEffect(() => {
+    if (!shadeReady || !webRef.current || currentMinutes == null) return;
+    if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
+    shadeDebounceRef.current = setTimeout(() => {
+      const now = new Date();
+      const target = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        Math.floor(currentMinutes / 60),
+        currentMinutes % 60,
+        0,
+        0,
+      );
+      const ts = target.getTime();
+      webRef.current?.injectJavaScript(
+        `try { window.setShadeTime(${ts}); } catch(e){} true;`,
+      );
+    }, 300);
+    return () => {
+      if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
+    };
+  }, [currentMinutes, shadeReady]);
+
+  // ─── User location overlay (simple blue dot on top of WebView) ─────────
+  // We render it as an RN view positioned at the projected pixel of the user
+  // location. The WebView sends the projected pixel for any [lng,lat] we put
+  // into the terraces list — for the user dot we use a separate strategy:
+  // we send a synthetic point with id='__user__' alongside the terraces.
+  const synthesizedUserPoint = useMemo<ViewportPoint | null>(() => {
+    if (!userLocation) return null;
+    const u = points.find((p) => p.id === '__user__');
+    return u || null;
+  }, [points, userLocation]);
+
+  // Inject the user point into terraces sent to WebView (so it gets projected)
+  useEffect(() => {
+    if (!mapReady || !webRef.current || !userLocation) return;
+    // Only inject after the regular terraces have been pushed.
+    const slim = terraces
+      .filter((t) => typeof t.lat === 'number' && typeof t.lng === 'number')
+      .map((t) => ({ id: t.id, lat: t.lat, lng: t.lng, sun_status: t.sun_status }))
+      .concat([
+        {
+          id: '__user__',
+          lat: userLocation.lat,
+          lng: userLocation.lng,
+          sun_status: 'sunny',
+        } as any,
+      ]);
+    const payload = JSON.stringify(slim);
+    webRef.current.injectJavaScript(
+      `try { window.updateTerraces(${payload}); } catch(e){} true;`,
+    );
+  }, [userLocation?.lat, userLocation?.lng, mapReady]);
+
+  // Map terrace.id → terrace for quick lookup in the marker render loop
+  const terracesById = useMemo(() => {
+    const m = new Map<string, Terrace>();
+    for (const t of terraces) m.set(t.id, t);
+    return m;
+  }, [terraces]);
 
   return (
     <View style={styles.container}>
-      <MapView
-        ref={mapRef}
+      <WebView
+        ref={webRef}
         style={StyleSheet.absoluteFill}
-        styleURL={styleURL}
-        logoEnabled={false}
-        attributionEnabled={false}
-        scaleBarEnabled={false}
-        compassEnabled={false}
-        scrollEnabled
-        zoomEnabled
-        pitchEnabled
-        rotateEnabled
-        onCameraChanged={onCameraChanged}
-        onDidFinishLoadingStyle={() => {
-          console.log(`[mapbox.style] ✅ style loaded — URL='${styleURL}'`);
-        }}
-        onDidFinishLoadingMap={() => {
-          console.log('[mapbox.map] ✅ map fully loaded (tiles + style)');
-        }}
-        onDidFailLoadingMap={() => {
-          console.warn('[mapbox.map] ❌ map failed to load — check token / network');
-        }}
-        testID="sun-map-native"
-      >
-        <Camera
-          ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: [center.lng, center.lat],
-            zoomLevel: 14,
-            pitch: 45,
-          }}
-          animationMode="flyTo"
-          animationDuration={1000}
-        />
+        originWhitelist={['*']}
+        source={{ html: MAP_HTML, baseUrl: 'https://localhost' }}
+        javaScriptEnabled
+        domStorageEnabled
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        onMessage={onMessage}
+        // Prevent the WebView from bouncing on iOS (we want pan to feel native)
+        bounces={false}
+        scrollEnabled={false}
+        showsHorizontalScrollIndicator={false}
+        showsVerticalScrollIndicator={false}
+        // iOS perf: disable HW back-forward cache, use modern WKWebView features
+        injectedJavaScriptBeforeContentLoaded={`
+          window.__SOLEIA_RN__ = true;
+          true;
+        `}
+        // Don't block on initial render
+        startInLoadingState={false}
+        // Allow WebGL + CDN scripts
+        mixedContentMode="always"
+        thirdPartyCookiesEnabled
+        cacheEnabled
+        testID="sun-map-webview"
+      />
 
-        {/* Bâtiments 3D : fournis nativement par le style `mapbox/streets-v12`
-            (couche `building` avec fill-extrusion à zoom ≥ 15). Aucun layer
-            custom ici → moins de code, moins de surface de bug, GPU heureux.
-
-            Pas de lightPreset, pas d'ombres GPU dynamiques — la carte reste
-            toujours claire et stable. Les ombres calculées par notre backend
-            (Suncalc + Douglas-Peucker) sont superposées si
-            `enableLegacyShadows={true}` ci-dessous. */}
-
-        {/* Ombres legacy OSM — désactivées par défaut, gardées en fallback */}
-        {enableLegacyShadows && shadowFeatureCollection.features.length > 0 && (
-          <ShapeSource id="soleia-shadows" shape={shadowFeatureCollection as any}>
-            <FillLayer
-              id="soleia-shadows-fill"
-              style={{
-                fillColor: 'rgba(20, 20, 30, 0.45)',
-                fillOutlineColor: 'rgba(20, 20, 30, 0.55)',
-              }}
-            />
-          </ShapeSource>
-        )}
-
-        {/* User location (puck bleu natif Mapbox) */}
-        {userLocation && (
-          <UserLocation
-            visible
-            androidRenderMode="normal"
-            showsUserHeadingIndicator
-          />
-        )}
-
-        {/* Fallback CircleLayer natif Mapbox — rend TOUJOURS un cercle pour
-            chaque terrasse, même si MarkerView a un bug d'affichage iOS sur
-            @rnmapbox/maps 10.x. Les couleurs reflètent le statut soleil/ombre.
-            Les MarkerView custom (riches) sont superposés par-dessus. */}
-        {terracesFeatureCollection.features.length > 0 && (
-          <ShapeSource
-            id="soleia-terraces-points"
-            shape={terracesFeatureCollection as any}
-            onPress={(e: any) => {
-              const f = e?.features?.[0];
-              const id = f?.properties?.id || f?.id;
-              const t = terraces.find((x) => x.id === id);
-              if (t) onMarkerPress(t);
-            }}
-          >
-            {/* Halo extérieur pour la terrasse sélectionnée */}
-            <CircleLayer
-              id="soleia-terraces-halo"
-              filter={['==', ['get', 'selected'], 1]}
-              style={{
-                circleRadius: 18,
-                circleColor: '#F5A623',
-                circleOpacity: 0.25,
-                circleStrokeWidth: 0,
-              }}
-            />
-            {/* Cercle principal — orange si au soleil, gris si à l'ombre */}
-            <CircleLayer
-              id="soleia-terraces-circles"
-              style={{
-                circleRadius: ['case', ['==', ['get', 'selected'], 1], 10, 7],
-                circleColor: [
-                  'case',
-                  ['==', ['get', 'sunny'], 1],
-                  '#F5A623',
-                  '#9E9E9E',
-                ],
-                circleStrokeWidth: 2,
-                circleStrokeColor: '#FFFFFF',
-                circleOpacity: 0.95,
-              }}
-            />
-          </ShapeSource>
-        )}
-
-        {/* Clusters + markers individuels */}
-        {clusters.map((c: any) => {
-          const [lng, lat] = c.geometry.coordinates;
-          if (c.properties && c.properties.cluster) {
-            const count = c.properties.point_count as number;
-            const sunny = (c.properties.sunny as number) || 0;
-            const clusterId = c.id as number;
-            const size = Math.min(68, 36 + Math.log2(count) * 6);
+      {/* Markers overlay — pointerEvents="box-none" lets pan/zoom gestures
+          fall through to the WebView, while individual markers still receive
+          tap events. */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        {points.map((p) => {
+          if (p.id === '__user__') {
             return (
-              <MarkerView
-                key={`cluster-${clusterId}`}
-                coordinate={[lng, lat]}
-                anchor={{ x: 0.5, y: 0.5 }}
-                allowOverlap
+              <View
+                key="user-dot"
+                pointerEvents="none"
+                style={[
+                  styles.userDotContainer,
+                  { left: p.x - 12, top: p.y - 12 },
+                ]}
               >
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    if (cameraRef.current) {
-                      cameraRef.current.setCamera({
-                        centerCoordinate: [lng, lat],
-                        zoomLevel: Math.min(17, currentZoom + 2),
-                        animationDuration: 500,
-                      });
-                    }
-                  }}
-                  style={[
-                    styles.cluster,
-                    {
-                      width: size,
-                      height: size,
-                      backgroundColor: darkMap ? '#F5A623' : '#FFFFFF',
-                      borderColor: '#F5A623',
-                    },
-                  ]}
-                >
-                  <Text style={[styles.clusterTop, { color: darkMap ? '#fff' : '#F5A623' }]}>
-                    {sunny}
-                  </Text>
-                  <Text style={[styles.clusterBottom, { color: darkMap ? '#fff' : '#333' }]}>
-                    /{count}
-                  </Text>
-                </TouchableOpacity>
-              </MarkerView>
+                <View style={styles.userDotPulse} />
+                <View style={styles.userDot} />
+              </View>
             );
           }
-          // Marker individuel
-          const terrace = c.properties?.terrace as Terrace;
+          const terrace = terracesById.get(p.id);
           if (!terrace) return null;
           return (
-            <MarkerView
-              key={`terrace-${terrace.id}`}
-              coordinate={[lng, lat]}
-              anchor={{ x: 0.5, y: 0.5 }}
-              allowOverlap={false}
+            <View
+              key={`m-${p.id}`}
+              pointerEvents="box-none"
+              style={[
+                styles.markerContainer,
+                { left: p.x - 18, top: p.y - 18 },
+              ]}
             >
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => onMarkerPress(terrace)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <TerraceMarker
                   terrace={terrace}
                   selected={selectedId === terrace.id}
                 />
               </TouchableOpacity>
-            </MarkerView>
+            </View>
           );
         })}
-      </MapView>
+      </View>
+
+      {/* Loading state while MapLibre boots */}
+      {!mapReady && (
+        <View style={styles.loadingOverlay} pointerEvents="none">
+          <Text style={styles.loadingText}>Chargement de la carte…</Text>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  cluster: {
-    borderRadius: 999,
-    borderWidth: 2,
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  markerContainer: { position: 'absolute', width: 36, height: 36 },
+  userDotContainer: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 6,
   },
-  clusterTop: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
-  clusterBottom: { fontSize: 11, fontWeight: '600', opacity: 0.85, marginTop: -2 },
+  userDot: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#4285F4',
+    borderWidth: 2,
+    borderColor: '#FFF',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: { elevation: 4 },
+    }),
+  },
+  userDotPulse: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(66, 133, 244, 0.25)',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: { color: '#666', fontSize: 14, fontWeight: '500' },
 });
