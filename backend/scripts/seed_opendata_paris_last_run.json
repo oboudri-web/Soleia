@@ -1,10 +1,10 @@
 {
-  "total": 5119,
-  "skipped_match": 1586,
-  "skipped_blacklist": 59,
-  "skipped_no_name": 161,
-  "skipped_dedup": 313,
+  "total": 23796,
+  "skipped_match": 13190,
+  "skipped_blacklist": 250,
+  "skipped_no_name": 735,
+  "skipped_dedup": 1763,
   "skipped_no_geo": 0,
-  "fsq_enriched": 2303,
-  "inserted": 3000
+  "fsq_enriched": 4127,
+  "inserted": 7858
 }
