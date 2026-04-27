@@ -1,0 +1,10 @@
+{
+  "total": 48,
+  "skipped_match": 28,
+  "skipped_blacklist": 0,
+  "skipped_no_name": 0,
+  "skipped_dedup": 0,
+  "skipped_no_geo": 0,
+  "fsq_enriched": 17,
+  "inserted": 20
+}
