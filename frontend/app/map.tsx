@@ -108,6 +108,15 @@ export default function MapScreen() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapThemePref, setMapThemePrefState] = useState<MapThemePref>('auto');
   const [tooFarZoomedOut, setTooFarZoomedOut] = useState(false);
+  // ── Debug overlay : pipeline RN→WebView→Mapbox markers
+  const [markersDebug, setMarkersDebug] = useState<{
+    apiCount: number;
+    rnSent: number;
+    webViewReceived: number;
+    markersRendered: number;
+    lastUrl: string;
+    lastFetchAt: number;
+  }>({ apiCount: 0, rnSent: 0, webViewReceived: 0, markersRendered: 0, lastUrl: '—', lastFetchAt: 0 });
   const [nextSunny, setNextSunny] = useState<NextSunny | null>(null);
   const [focusCoords, setFocusCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [sliderExpanded, setSliderExpanded] = useState(false);
@@ -483,15 +492,21 @@ export default function MapScreen() {
       // (le moveend du Mapbox arrivera dans <600ms après le mapReady), mais
       // dès qu'on en a un, on ne charge que dans cette zone et max 200.
       // Si le bbox est trop large (zoom dezoomé France entière), on skip.
+
+      // Skip si pas encore de bbox initial (sera relancé dès que `mapBbox`
+      // est settled par le useEffect "[map.bbox] initial bbox set" ou par
+      // le moveend de la WebView). Évite une 1ère requête globale inutile.
+      if (!mapBbox) {
+        console.log('[map.loadData] ⏸  skipped — waiting for initial bbox');
+        return;
+      }
       const MAX_BBOX_SPAN_DEG = 0.5; // ≈55 km côté max — sinon "Zoomez"
       let tooFar = false;
-      if (mapBbox) {
-        const spanLat = mapBbox.lat_max - mapBbox.lat_min;
-        const spanLng = mapBbox.lng_max - mapBbox.lng_min;
-        if (spanLat > MAX_BBOX_SPAN_DEG || spanLng > MAX_BBOX_SPAN_DEG) {
-          tooFar = true;
-          console.log(`[map.loadData] ⚠️  bbox too wide (spanLat=${spanLat.toFixed(3)}, spanLng=${spanLng.toFixed(3)}) → user must zoom in`);
-        }
+      const spanLat = mapBbox.lat_max - mapBbox.lat_min;
+      const spanLng = mapBbox.lng_max - mapBbox.lng_min;
+      if (spanLat > MAX_BBOX_SPAN_DEG || spanLng > MAX_BBOX_SPAN_DEG) {
+        tooFar = true;
+        console.log(`[map.loadData] ⚠️  bbox too wide (spanLat=${spanLat.toFixed(3)}, spanLng=${spanLng.toFixed(3)}) → user must zoom in`);
       }
       setTooFarZoomedOut(tooFar);
       if (tooFar) {
@@ -511,6 +526,14 @@ export default function MapScreen() {
         params.lng_max = mapBbox.lng_max;
       }
 
+      // Construire l'URL de debug pour l'overlay
+      const dbgUrl =
+        '/api/terraces?' +
+        Object.entries(params)
+          .map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(4) : v}`)
+          .join('&');
+      console.log('[map.loadData] 📡 calling: ' + dbgUrl);
+
       const [terracesRes, weatherRes] = await Promise.all([
         api.listTerraces(params),
         api.getWeather(city).catch(() => null),
@@ -518,6 +541,13 @@ export default function MapScreen() {
       console.log(
         `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
       );
+      // ── Update debug overlay state
+      setMarkersDebug((prev) => ({
+        ...prev,
+        apiCount: terracesRes.terraces.length,
+        lastUrl: dbgUrl,
+        lastFetchAt: Date.now(),
+      }));
       // ── Stats globales + breakdown par ville
       try {
         const all = terracesRes.terraces;
@@ -683,8 +713,21 @@ export default function MapScreen() {
           shadowPolygons={shadowPolygons}
           enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
+          onMarkersUpdate={(info) => setMarkersDebug((prev) => ({ ...prev, ...info }))}
         />
       </View>
+
+      {/* Debug overlay (TEMPORAIRE) — pipeline RN→WebView→Mapbox */}
+      <SafeAreaView style={styles.debugOverlay} edges={['top']} pointerEvents="none">
+        <View style={styles.debugBox}>
+          <Text style={styles.debugText}>
+            📡 API: {markersDebug.apiCount} · 📤 RN→WV: {markersDebug.rnSent} · 🎯 Reçus: {markersDebug.webViewReceived} · ✅ Markers: {markersDebug.markersRendered}
+          </Text>
+          <Text style={styles.debugTextSmall} numberOfLines={1}>
+            {markersDebug.lastUrl}
+          </Text>
+        </View>
+      </SafeAreaView>
 
       {/* Top overlay: SunSeekr-style compact header + slider+search row + filter pills */}
       <SafeAreaView style={styles.topOverlay} edges={['top']} pointerEvents="box-none">
@@ -995,6 +1038,34 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+  },
+  // ─── DEBUG overlay (à retirer une fois le bug markers résolu) ───
+  debugOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 9999,
+  },
+  debugBox: {
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginHorizontal: 8,
+    marginTop: 4,
+    borderRadius: 8,
+  },
+  debugText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+    fontWeight: '600',
+  },
+  debugTextSmall: {
+    color: '#9AE6B4',
+    fontSize: 9,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+    marginTop: 2,
   },
   topRow: {
     flexDirection: 'row',

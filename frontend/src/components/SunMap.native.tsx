@@ -45,6 +45,12 @@ type Props = {
   onShadeIdle?: (stats: { sunny: number; shaded: number; total: number }) => void;
   /** Optional callback when ShadeMap reports a per-terrace sun update. */
   onSunUpdate?: (id: string, sunny: boolean) => void;
+  /** Optional callback for live debug overlay (pipeline RN→WebView→Mapbox). */
+  onMarkersUpdate?: (info: {
+    rnSent?: number;
+    webViewReceived?: number;
+    markersRendered?: number;
+  }) => void;
 };
 
 export default function SunMap({
@@ -58,6 +64,7 @@ export default function SunMap({
   polygonsGeoJSON,
   onShadeIdle,
   onSunUpdate,
+  onMarkersUpdate,
   onRegionChange,
 }: Props) {
   const webRef = useRef<WebView>(null);
@@ -141,6 +148,14 @@ export default function SunMap({
               });
             }
             break;
+          case 'terracesReceived':
+            console.log('[soleia.web] [DBG] WebView received ' + data.count + ' terraces');
+            if (onMarkersUpdate) onMarkersUpdate({ webViewReceived: data.count });
+            break;
+          case 'terracesAck':
+            console.log('[soleia.web] [DBG] WebView pushed ' + data.count + ' features to source');
+            if (onMarkersUpdate) onMarkersUpdate({ markersRendered: data.count });
+            break;
           case 'error':
             console.warn('[soleia.web] error:', data.msg);
             break;
@@ -184,6 +199,7 @@ export default function SunMap({
       'try { window.updateTerraces(' + payload + '); } catch(e){} true;',
     );
     console.log('[soleia.rn] sent ' + slim.length + ' terraces to WebView');
+    if (onMarkersUpdate) onMarkersUpdate({ rnSent: slim.length });
   }, [terraces, mapReady]);
 
   // Push polygons whenever they change
