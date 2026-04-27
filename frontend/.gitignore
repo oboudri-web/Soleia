@@ -41,3 +41,6 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Prevent npm lockfile from coexisting with yarn.lock (breaks EAS build)
+package-lock.json
