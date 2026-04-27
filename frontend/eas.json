@@ -48,9 +48,9 @@
     },
     "production": {
       "extends": "base",
-      "autoIncrement": true,
       "ios": {
-        "resourceClass": "m-medium"
+        "resourceClass": "m-medium",
+        "autoIncrement": true
       },
       "android": {
         "buildType": "app-bundle"
