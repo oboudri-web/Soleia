@@ -108,15 +108,6 @@ export default function MapScreen() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapThemePref, setMapThemePrefState] = useState<MapThemePref>('auto');
   const [tooFarZoomedOut, setTooFarZoomedOut] = useState(false);
-  // ── Debug overlay : pipeline RN→WebView→Mapbox markers
-  const [markersDebug, setMarkersDebug] = useState<{
-    apiCount: number;
-    rnSent: number;
-    webViewReceived: number;
-    markersRendered: number;
-    lastUrl: string;
-    lastFetchAt: number;
-  }>({ apiCount: 0, rnSent: 0, webViewReceived: 0, markersRendered: 0, lastUrl: '—', lastFetchAt: 0 });
   const [nextSunny, setNextSunny] = useState<NextSunny | null>(null);
   const [focusCoords, setFocusCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [sliderExpanded, setSliderExpanded] = useState(false);
@@ -541,13 +532,6 @@ export default function MapScreen() {
       console.log(
         `[map.loadData] ✅ ${terracesRes.terraces.length} terraces loaded — bbox=${mapBbox ? 'yes' : 'no'} at_time=${atTime || 'now'}`,
       );
-      // ── Update debug overlay state
-      setMarkersDebug((prev) => ({
-        ...prev,
-        apiCount: terracesRes.terraces.length,
-        lastUrl: dbgUrl,
-        lastFetchAt: Date.now(),
-      }));
       // ── Stats globales + breakdown par ville
       try {
         const all = terracesRes.terraces;
@@ -676,13 +660,17 @@ export default function MapScreen() {
   const formatTime = (mins: number) => formatTimeFr(mins);
 
   const onMarkerPress = (t: Terrace) => {
-    setSelectedId(t.id);
-    // Ouvre directement la fiche terrasse au tap (cluster individual point)
-    const isPlanning = dateOffset > 0 || !isLiveMode;
-    router.push({
-      pathname: '/terrace/[id]',
-      params: { id: t.id, at_time: isPlanning ? buildAtTime() : '' },
-    });
+    try {
+      setSelectedId(t.id);
+      // Ouvre directement la fiche terrasse au tap (cluster individual point)
+      const isPlanning = dateOffset > 0 || !isLiveMode;
+      router.push({
+        pathname: '/terrace/[id]',
+        params: { id: t.id, at_time: isPlanning ? buildAtTime() : '' },
+      });
+    } catch (e) {
+      console.warn('[onMarkerPress] error opening terrace:', e);
+    }
   };
 
   const onCardPress = (t: Terrace) => {
@@ -713,21 +701,8 @@ export default function MapScreen() {
           shadowPolygons={shadowPolygons}
           enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
-          onMarkersUpdate={(info) => setMarkersDebug((prev) => ({ ...prev, ...info }))}
         />
       </View>
-
-      {/* Debug overlay (TEMPORAIRE) — pipeline RN→WebView→Mapbox */}
-      <SafeAreaView style={styles.debugOverlay} edges={['top']} pointerEvents="none">
-        <View style={styles.debugBox}>
-          <Text style={styles.debugText}>
-            📡 API: {markersDebug.apiCount} · 📤 RN→WV: {markersDebug.rnSent} · 🎯 Reçus: {markersDebug.webViewReceived} · ✅ Markers: {markersDebug.markersRendered}
-          </Text>
-          <Text style={styles.debugTextSmall} numberOfLines={1}>
-            {markersDebug.lastUrl}
-          </Text>
-        </View>
-      </SafeAreaView>
 
       {/* Top overlay: SunSeekr-style compact header + slider+search row + filter pills */}
       <SafeAreaView style={styles.topOverlay} edges={['top']} pointerEvents="box-none">
