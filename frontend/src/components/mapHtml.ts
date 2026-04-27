@@ -320,7 +320,7 @@ export const MAP_HTML = `<!DOCTYPE html>
                     ['==', ['get', 'soonSunny'], 1], 'sun-soon',
                     'sun-shade',
                   ],
-                  'icon-size': 0.5,
+                  'icon-size': 0.75,
                   'icon-allow-overlap': true,
                   'icon-ignore-placement': true,
                   'icon-anchor': 'center',
@@ -354,18 +354,13 @@ export const MAP_HTML = `<!DOCTYPE html>
             });
           });
 
-          // Click individual marker -> postMessage to RN
-          map.on('click', 'soleia-unclustered', function (e) {
-            var f = (e.features || [])[0];
-            if (!f) return;
-            postToRN({ type: 'markerPress', id: f.properties.id });
-          });
-
-          // Cursor feedback on web (no-op on iOS)
+          // Cursor feedback on web (no-op on iOS) — for clusters only.
+          // Marker click + cursor-on-marker is wired inside the SVG-icon
+          // Promise.all callback above (so the layer exists). Keeping a
+          // duplicate map.on('click', 'soleia-unclustered') here would fire
+          // markerPress TWICE per tap → double opening of the terrace card.
           map.on('mouseenter', 'soleia-clusters', function () { map.getCanvas().style.cursor = 'pointer'; });
           map.on('mouseleave', 'soleia-clusters', function () { map.getCanvas().style.cursor = ''; });
-          map.on('mouseenter', 'soleia-unclustered', function () { map.getCanvas().style.cursor = 'pointer'; });
-          map.on('mouseleave', 'soleia-unclustered', function () { map.getCanvas().style.cursor = ''; });
         } catch (eClu) {
           postToRN({ type: 'error', msg: 'cluster setup failed: ' + eClu.message });
         }
@@ -487,7 +482,14 @@ export const MAP_HTML = `<!DOCTYPE html>
         if (isNaN(d.getTime())) return;
         nowDate = d;
         shadeMap.setDate(d);
-        postToRN({ type: 'shadeLog', msg: 'setDate ' + d.toISOString() });
+        // Verbose log: report both the ISO (UTC) and the Europe/Paris-formatted
+        // local time so we can quickly spot timezone bugs.
+        var localStr;
+        try {
+          localStr = d.toLocaleString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit',
+            minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+        } catch (eFmt) { localStr = d.toString(); }
+        postToRN({ type: 'shadeLog', msg: 'setDate iso=' + d.toISOString() + ' paris=' + localStr });
       } catch (e) {
         postToRN({ type: 'error', msg: 'setShadeTime failed: ' + e.message });
       }

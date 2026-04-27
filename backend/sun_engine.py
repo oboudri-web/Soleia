@@ -17,7 +17,10 @@ import pytz
 # Tolérance de l'angle pour considérer une terrasse "face au soleil" (degrés)
 ORIENTATION_TOLERANCE = 60
 # Hauteur solaire minimale pour considérer la terrasse ensoleillée (degrés)
-MIN_ALTITUDE = 10
+# Avant : 10° (trop strict, à 20h13 fin avril Nantes alt=8.8° → tout en ombre).
+# Après : 3° — on garde une marge sur l'horizon (bâtiments lointains, collines)
+# mais on couvre toute la fin de journée jusqu'au vrai coucher de soleil.
+MIN_ALTITUDE = 3
 
 # Fuseau horaire Europe/Paris (villes françaises)
 PARIS_TZ = pytz.timezone("Europe/Paris")

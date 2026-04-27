@@ -113,15 +113,6 @@ export default function MapScreen() {
   const [sliderExpanded, setSliderExpanded] = useState(false);
   void sliderExpanded; void setSliderExpanded;
 
-  // ── DEBUG markers pipeline (visible badge top-right) — to diagnose
-  // why iOS device sometimes shows 0 markers despite API returning data.
-  // Shows: backend count → RN sent → WebView received → Mapbox features pushed.
-  const [markersDbg, setMarkersDbg] = useState<{
-    rnSent?: number;
-    webViewReceived?: number;
-    markersRendered?: number;
-  }>({});
-
   // @gorhom/bottom-sheet integration — 3 snap points: 10% (handle only), 50% (half), 90% (full)
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['10%', '50%', '90%'], []);
@@ -710,16 +701,7 @@ export default function MapScreen() {
           shadowPolygons={shadowPolygons}
           enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
-          onMarkersUpdate={(info) =>
-            setMarkersDbg((prev) => ({ ...prev, ...info }))
-          }
         />
-        {/* DEBUG markers pipeline — small badge to diagnose iOS data flow */}
-        <View pointerEvents="none" style={styles.markersDbgBadge}>
-          <Text style={styles.markersDbgText}>
-            {`API:${terraces.length} → RN:${markersDbg.rnSent ?? '·'} → WV:${markersDbg.webViewReceived ?? '·'} → Map:${markersDbg.markersRendered ?? '·'}`}
-          </Text>
-        </View>
       </View>
 
       {/* Top overlay: SunSeekr-style compact header + slider+search row + filter pills */}
@@ -1031,30 +1013,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-  },
-  // Debug pipeline badge — fixed position, top center over the map.
-  // Visible on iOS, Android and web for diagnostic purposes.
-  markersDbgBadge: {
-    position: 'absolute',
-    top: 130,
-    left: 50,
-    right: 50,
-    backgroundColor: '#000000',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    zIndex: 9999,
-    elevation: 10,
-    borderWidth: 1,
-    borderColor: '#FFD54A',
-    alignItems: 'center',
-  },
-  markersDbgText: {
-    color: '#FFD54A',
-    fontSize: 11,
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
-    fontWeight: '700',
-    letterSpacing: 0.3,
   },
   topRow: {
     flexDirection: 'row',
