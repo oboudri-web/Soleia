@@ -1,0 +1,12 @@
+[
+  {
+    "city": "Paris",
+    "records_in_dataset": 23796,
+    "candidates_in_db": 9743,
+    "matched_unique": 2818,
+    "matched_total": 6101,
+    "skipped_no_name": 735,
+    "skipped_no_match": 16960,
+    "already_confirmed": 4752
+  }
+]
