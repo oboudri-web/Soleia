@@ -1,0 +1,10 @@
+{
+  "Paris": {
+    "updated": 0,
+    "skipped": 0,
+    "rating_only": 0,
+    "photo_only": 0,
+    "both": 0,
+    "no_match": 20
+  }
+}

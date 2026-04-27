@@ -1,0 +1,10 @@
+{
+  "by_city": {
+    "Paris": 0,
+    "Lyon": 2,
+    "Marseille": 0,
+    "Nantes": 0
+  },
+  "fails": 0,
+  "total_attempted": 2
+}
