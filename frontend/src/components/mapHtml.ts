@@ -248,98 +248,42 @@ export const MAP_HTML = `<!DOCTYPE html>
             },
           });
 
-          // ----- Sun status icons (SVG → PNG via Image + map.addImage) ------
-          // Reliable on iOS WebView (emoji text-field is flaky on iOS Mapbox).
-          var SUN_SUNNY_SVG =
-            '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
-              '<g stroke="#F5A623" stroke-width="3" stroke-linecap="round">' +
-                '<line x1="32" y1="4" x2="32" y2="13"/>' +
-                '<line x1="32" y1="51" x2="32" y2="60"/>' +
-                '<line x1="4" y1="32" x2="13" y2="32"/>' +
-                '<line x1="51" y1="32" x2="60" y2="32"/>' +
-                '<line x1="11" y1="11" x2="17" y2="17"/>' +
-                '<line x1="47" y1="47" x2="53" y2="53"/>' +
-                '<line x1="11" y1="53" x2="17" y2="47"/>' +
-                '<line x1="47" y1="17" x2="53" y2="11"/>' +
-              '</g>' +
-              '<circle cx="32" cy="32" r="13" fill="#F5A623" stroke="#FFFFFF" stroke-width="2.5"/>' +
-            '</svg>';
-          var SUN_SOON_SVG =
-            '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
-              '<circle cx="32" cy="32" r="14" fill="#FFFFFF" stroke="#FFB347" stroke-width="3"/>' +
-              '<path d="M 32 18 A 14 14 0 0 1 32 46 Z" fill="#FFB347"/>' +
-            '</svg>';
-          var SUN_SHADE_SVG =
-            '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
-              '<circle cx="32" cy="32" r="13" fill="#9E9E9E" stroke="#FFFFFF" stroke-width="2.5"/>' +
-            '</svg>';
-
-          function loadSvgIcon(id, svg) {
-            return new Promise(function (resolve) {
-              try {
-                if (map.hasImage(id)) { resolve(); return; }
-              } catch (eHas) {}
-              var img = new Image(64, 64);
-              var done = false;
-              img.onload = function () {
-                if (done) return; done = true;
-                try {
-                  if (!map.hasImage(id)) {
-                    map.addImage(id, img, { pixelRatio: 2 });
-                  }
-                } catch (eAdd) {
-                  postToRN({ type: 'error', msg: 'addImage ' + id + ' failed: ' + eAdd.message });
-                }
-                resolve();
-              };
-              img.onerror = function () {
-                if (done) return; done = true;
-                postToRN({ type: 'error', msg: 'icon load failed: ' + id });
-                resolve();
-              };
-              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-            });
-          }
-
-          Promise.all([
-            loadSvgIcon('sun-sunny', SUN_SUNNY_SVG),
-            loadSvgIcon('sun-soon',  SUN_SOON_SVG),
-            loadSvgIcon('sun-shade', SUN_SHADE_SVG),
-          ]).then(function () {
-            try {
-              if (map.getLayer('soleia-unclustered')) return;
-              map.addLayer({
-                id: 'soleia-unclustered',
-                type: 'symbol',
-                source: 'soleia-terraces',
-                filter: ['!', ['has', 'point_count']],
-                layout: {
-                  'icon-image': [
-                    'case',
-                    ['==', ['get', 'sunny'], 1], 'sun-sunny',
-                    ['==', ['get', 'soonSunny'], 1], 'sun-soon',
-                    'sun-shade',
-                  ],
-                  'icon-size': 0.75,
-                  'icon-allow-overlap': true,
-                  'icon-ignore-placement': true,
-                  'icon-anchor': 'center',
-                },
-              });
-
-              // Click handler must be re-attached here since layer is added later
-              map.on('click', 'soleia-unclustered', function (e) {
-                var f = (e.features || [])[0];
-                if (!f) return;
-                postToRN({ type: 'markerPress', id: f.properties.id });
-              });
-              map.on('mouseenter', 'soleia-unclustered', function () { map.getCanvas().style.cursor = 'pointer'; });
-              map.on('mouseleave', 'soleia-unclustered', function () { map.getCanvas().style.cursor = ''; });
-              postToRN({ type: 'iconsReady' });
-            } catch (eLay) {
-              postToRN({ type: 'error', msg: 'unclustered layer add failed: ' + eLay.message });
-            }
+          // ----- Sun status markers — native Mapbox circles ------------------
+          // Previous attempts used SVG inline + map.addImage() which is flaky
+          // in iOS WKWebView (silent failures, no icon renders). Native `circle`
+          // layers work 100% reliably on every platform.
+          //   - yellow  #F5A623  → sunny
+          //   - gold    #FFD700  → soon
+          //   - grey    #9E9E9E  → shade
+          // Radius 10 px + 2 px white halo → ~24 px effective target, easy to tap.
+          map.addLayer({
+            id: 'soleia-unclustered',
+            type: 'circle',
+            source: 'soleia-terraces',
+            filter: ['!', ['has', 'point_count']],
+            paint: {
+              'circle-radius': 10,
+              'circle-color': [
+                'case',
+                ['==', ['get', 'sunny'], 1], '#F5A623',
+                ['==', ['get', 'soonSunny'], 1], '#FFD700',
+                '#9E9E9E',
+              ],
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#FFFFFF',
+              'circle-opacity': 0.95,
+            },
           });
+
+          // Click handler on individual markers (wired once here)
+          map.on('click', 'soleia-unclustered', function (e) {
+            var f = (e.features || [])[0];
+            if (!f) return;
+            postToRN({ type: 'markerPress', id: f.properties.id });
+          });
+          map.on('mouseenter', 'soleia-unclustered', function () { map.getCanvas().style.cursor = 'pointer'; });
+          map.on('mouseleave', 'soleia-unclustered', function () { map.getCanvas().style.cursor = ''; });
+          postToRN({ type: 'iconsReady' });
 
           // Click cluster -> zoom in
           map.on('click', 'soleia-clusters', function (e) {
