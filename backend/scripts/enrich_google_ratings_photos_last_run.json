@@ -1,9 +1,30 @@
 {
-  "Lyon": {
-    "updated": 10,
+  "Paris": {
+    "updated": 1837,
     "rating": 0,
-    "photo": 10,
+    "photo": 1833,
     "no_match": 0,
+    "skipped": 0
+  },
+  "Lyon": {
+    "updated": 1450,
+    "rating": 1101,
+    "photo": 1323,
+    "no_match": 33,
+    "skipped": 0
+  },
+  "Marseille": {
+    "updated": 1042,
+    "rating": 799,
+    "photo": 942,
+    "no_match": 13,
+    "skipped": 0
+  },
+  "Nantes": {
+    "updated": 612,
+    "rating": 484,
+    "photo": 549,
+    "no_match": 13,
     "skipped": 0
   }
 }
