@@ -250,7 +250,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
           // ----- Sun status markers — native Mapbox circles ------------------
           // Previous attempts used SVG inline + map.addImage() which is flaky
-          // in iOS WKWebView (silent failures, no icon renders). Native `circle`
+          // in iOS WKWebView (silent failures, no icon renders). Native 'circle'
           // layers work 100% reliably on every platform.
           //   - yellow  #F5A623  → sunny
           //   - gold    #FFD700  → soon
