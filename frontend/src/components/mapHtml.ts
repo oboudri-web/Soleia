@@ -248,23 +248,28 @@ export const MAP_HTML = `<!DOCTYPE html>
             },
           });
 
-          // Unclustered individual marker (8px small dot)
+          // Unclustered individual marker — Sun emoji per status
           map.addLayer({
             id: 'soleia-unclustered',
-            type: 'circle',
+            type: 'symbol',
             source: 'soleia-terraces',
             filter: ['!', ['has', 'point_count']],
-            paint: {
-              'circle-color': [
+            layout: {
+              'text-field': [
                 'case',
-                ['==', ['get', 'sunny'], 1], '#F5A623',
-                ['==', ['get', 'soonSunny'], 1], '#FFFFFF',
-                '#9E9E9E',
+                ['==', ['get', 'sunny'], 1], '\u2600\uFE0F',
+                ['==', ['get', 'soonSunny'], 1], '\u26C5',
+                '\uD83C\uDF11',
               ],
-              'circle-radius': 6,
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#FFFFFF',
-              'circle-opacity': 0.95,
+              'text-size': 28,
+              'text-allow-overlap': true,
+              'text-ignore-placement': true,
+              'text-anchor': 'center',
+            },
+            paint: {
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 1.2,
+              'text-opacity': 1,
             },
           });
 

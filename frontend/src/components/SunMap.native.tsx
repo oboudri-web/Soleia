@@ -130,8 +130,12 @@ export default function SunMap({
             if (onSunUpdate) onSunUpdate(data.id, !!data.sunny);
             break;
           case 'markerPress': {
-            const t = terraces.find((x) => x.id === data.id);
-            if (t) onMarkerPress(t);
+            try {
+              const t = terraces.find((x) => x.id === data.id);
+              if (t) onMarkerPress(t);
+            } catch (errMP) {
+              console.warn('[soleia.web] markerPress handler crashed:', errMP);
+            }
             break;
           }
           case 'mapError':
