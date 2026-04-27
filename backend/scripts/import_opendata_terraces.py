@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+import jellyfish  # soundex / metaphone for fuzzy phonetic match
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -97,6 +98,97 @@ def name_similarity(a: str, b: str) -> float:
         return 0.0
     inter = len(ta & tb)
     union = len(ta | tb)
+    return inter / union
+
+
+# ── Adresse normalisation ────────────────────────────────────────────────
+ADDR_TYPE_VOIE_MAP = {
+    "av": "avenue", "ave": "avenue", "av.": "avenue",
+    "bd": "boulevard", "bld": "boulevard", "blvd": "boulevard", "bvd": "boulevard",
+    "rte": "route",
+    "pl": "place", "plc": "place",
+    "imp": "impasse",
+    "all": "allee", "allee": "allee", "allée": "allee",
+    "fbg": "faubourg", "fg": "faubourg",
+    "sq": "square",
+    "qu": "quai",
+    "pte": "porte",
+    "pas": "passage", "psg": "passage",
+    "crs": "cours", "cr": "cours",
+    "vle": "ville", "ste": "saint", "st": "saint",
+}
+
+
+def parse_address(addr: str) -> Optional[Tuple[str, str]]:
+    """Return (numero, rue_normalized) tuple, or None if can't parse."""
+    if not addr:
+        return None
+    n = normalize_text(addr)
+    # Match "12 bis avenue ..." or "12 rue ..." or "12-14 rue ..."
+    m = re.match(r"^(\d{1,4})(?:\s*(?:bis|ter|quater|[-–]\s*\d+))?\s+(.+)$", n)
+    if not m:
+        return None
+    numero = m.group(1)
+    rest = m.group(2).strip()
+    # Strip type voie + normalize abbreviations
+    parts = rest.split()
+    if not parts:
+        return None
+    first = parts[0]
+    if first in ADDR_TYPE_VOIE_MAP:
+        first = ADDR_TYPE_VOIE_MAP[first]
+        parts[0] = first
+    # Strip stop-words on the first significant rue keyword
+    keep = []
+    for p in parts:
+        if p in {"de", "du", "des", "la", "le", "les", "l", "d"}:
+            continue
+        keep.append(p)
+    return numero, " ".join(keep)
+
+
+def address_match(open_addr: str, db_addr: str) -> float:
+    """0..1 score on (numero, rue). 1.0 if exact, partial if rue overlaps."""
+    a = parse_address(open_addr)
+    b = parse_address(db_addr)
+    if not a or not b:
+        return 0.0
+    if a[0] != b[0]:
+        return 0.0  # different street number → reject
+    # Rue similarity (Jaccard tokens)
+    ra = set(a[1].split())
+    rb = set(b[1].split())
+    if not ra or not rb:
+        return 0.0
+    inter = len(ra & rb)
+    if inter == 0:
+        return 0.0
+    return inter / max(len(ra), len(rb))
+
+
+# ── Phonetic match (Soundex / Metaphone) ────────────────────────────────
+def soundex_tokens(name: str) -> set:
+    """Return the set of soundex codes of meaningful tokens in `name`."""
+    STOPWORDS = {"le", "la", "les", "de", "du", "des", "l", "d", "et", "the", "bar", "cafe", "restaurant", "brasserie"}
+    out = set()
+    for w in normalize_text(name).split():
+        if len(w) < 3 or w in STOPWORDS:
+            continue
+        try:
+            out.add(jellyfish.soundex(w))
+        except Exception:
+            pass
+    return out
+
+
+def phonetic_similarity(a: str, b: str) -> float:
+    """Jaccard on soundex codes — handles small spelling variations."""
+    sa = soundex_tokens(a)
+    sb = soundex_tokens(b)
+    if not sa or not sb:
+        return 0.0
+    inter = len(sa & sb)
+    union = len(sa | sb)
     return inter / union
 
 
@@ -195,11 +287,24 @@ def find_match(
     name: str,
     lat: float,
     lng: float,
+    open_addr: str,
     candidates: List[Dict[str, Any]],
-    max_dist_m: float = 200.0,
-    min_name_sim: float = 0.5,
+    max_dist_m: float = 80.0,
+    min_combined_score: float = 0.45,
 ) -> Optional[Dict[str, Any]]:
-    """Return the best matching DB candidate, or None."""
+    """Return the best matching DB candidate via multi-strategy combined score.
+
+    Strategies (any single signal at high enough strength can match):
+      1. Name Jaccard similarity (token-based, stop-words filtered)  ≥ 0.40
+      2. Phonetic (Soundex on tokens)                                ≥ 0.50
+      3. Address (numéro + rue normalisée, type voie résolu)         ≥ 0.50
+
+    Combined weighted score (used for ranking when multiple candidates):
+      score = max(name_sim, phonetic_sim, addr_sim) * 0.7
+            + (1 - dist/max_dist) * 0.3
+
+    Distance gate stays strict at ≤80m to avoid cross-street collisions.
+    """
     norm_name = normalize_text(name)
     if not norm_name:
         return None
@@ -212,15 +317,32 @@ def find_match(
         except (TypeError, ValueError):
             continue
         dist = haversine_m(lat, lng, clat, clng)
-        if dist > max_dist_m:
+        # Two-tier distance gate :
+        #   ≤80m  → standard match (any signal ≥ threshold)
+        #   ≤150m → only if signal is STRONG (name ≥0.7 OR phon ≥0.7 OR addr ≥0.8)
+        if dist > 150.0:
             continue
-        sim = name_similarity(name, c.get("name") or "")
-        if sim < min_name_sim:
+        cand_name = c.get("name") or ""
+        cand_addr = c.get("address") or ""
+
+        sim_name = name_similarity(name, cand_name)
+        sim_phon = phonetic_similarity(name, cand_name)
+        sim_addr = address_match(open_addr, cand_addr) if open_addr and cand_addr else 0.0
+
+        # ── Acceptance gates : any of the 3 signals strong enough ─────
+        if dist <= 80.0:
+            accepted = (sim_name >= 0.40) or (sim_phon >= 0.50) or (sim_addr >= 0.50)
+        else:
+            # Far candidates need a strong signal
+            accepted = (sim_name >= 0.70) or (sim_phon >= 0.70) or (sim_addr >= 0.80)
+        if not accepted:
             continue
-        # Score: weighted by name sim (higher = better) and distance proximity.
-        # Penalty for distance (1.0 at 0m, 0.0 at max_dist_m).
-        dist_score = max(0.0, 1.0 - dist / max_dist_m)
-        score = sim * 0.7 + dist_score * 0.3
+
+        signal = max(sim_name, sim_phon, sim_addr)
+        dist_score = max(0.0, 1.0 - dist / 150.0)
+        score = signal * 0.7 + dist_score * 0.3
+        if score < min_combined_score:
+            continue
         if score > best_score:
             best_score = score
             best = c
@@ -259,15 +381,15 @@ def import_city(city: str, dry_run: bool) -> Dict[str, Any]:
         if not geo:
             continue
         lat, lng = geo
-        cand = find_match(name, lat, lng, candidates)
-        if not cand:
-            skipped_no_match += 1
-            continue
         # Build address string (may differ per dataset)
         if cfg["address_field"]:
             address = (rec.get(cfg["address_field"]) or "").strip()
         else:
             address = build_toulouse_address(rec)
+        cand = find_match(name, lat, lng, address, candidates)
+        if not cand:
+            skipped_no_match += 1
+            continue
 
         was_confirmed = bool(cand.get("has_terrace_confirmed"))
         if was_confirmed:

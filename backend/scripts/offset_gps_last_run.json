@@ -1,0 +1,14 @@
+{
+  "total_offset": 16444,
+  "by_city": {
+    "Nantes": 1128,
+    "Paris": 6398,
+    "Lyon": 2396,
+    "Marseille": 1919,
+    "Bordeaux": 1442,
+    "Toulouse": 921,
+    "Nice": 1150,
+    "Montpellier": 1090
+  },
+  "dry_run": false
+}

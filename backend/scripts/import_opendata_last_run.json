@@ -3,10 +3,20 @@
     "city": "Paris",
     "records_in_dataset": 23796,
     "candidates_in_db": 9743,
-    "matched_unique": 2818,
-    "matched_total": 6101,
+    "matched_unique": 3339,
+    "matched_total": 7312,
     "skipped_no_name": 735,
-    "skipped_no_match": 16960,
-    "already_confirmed": 4752
+    "skipped_no_match": 15749,
+    "already_confirmed": 7283
+  },
+  {
+    "city": "Toulouse",
+    "records_in_dataset": 1036,
+    "candidates_in_db": 1318,
+    "matched_unique": 396,
+    "matched_total": 425,
+    "skipped_no_name": 0,
+    "skipped_no_match": 611,
+    "already_confirmed": 390
   }
 ]
