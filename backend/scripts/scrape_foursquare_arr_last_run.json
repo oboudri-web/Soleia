@@ -1,22 +1,17 @@
 {
   "cities": {
-    "Paris": {
-      "inserted": 8,
-      "duplicates": 322,
-      "blacklisted": 0
-    },
     "Lyon": {
-      "inserted": 0,
-      "duplicates": 12,
-      "blacklisted": 0
+      "inserted": 208,
+      "duplicates": 753,
+      "blacklisted": 8
     },
     "Marseille": {
-      "inserted": 0,
-      "duplicates": 42,
-      "blacklisted": 0
+      "inserted": 120,
+      "duplicates": 632,
+      "blacklisted": 6
     }
   },
-  "total_inserted": 8,
-  "total_dup": 376,
-  "total_blacklisted": 0
+  "total_inserted": 328,
+  "total_dup": 1385,
+  "total_blacklisted": 14
 }
