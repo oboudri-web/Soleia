@@ -1,5 +1,7 @@
 {
+  "mode": "fix-existing",
   "total_offset": 16444,
+  "skipped_already": 0,
   "by_city": {
     "Nantes": 1128,
     "Paris": 6398,
@@ -10,5 +12,6 @@
     "Nice": 1150,
     "Montpellier": 1090
   },
+  "offset_m": 2.0,
   "dry_run": false
 }
