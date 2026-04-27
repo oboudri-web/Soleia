@@ -14,11 +14,13 @@
       "buildNumber": "65",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Trouver les terrasses au soleil près de vous",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Recevoir les alertes terrasses ensoleillées même en arrière-plan",
+        "NSLocationAlwaysUsageDescription": "Recevoir les alertes terrasses ensoleillées même en arrière-plan",
         "NSCameraUsageDescription": "Prendre une photo pour valider cette terrasse",
         "NSPhotoLibraryUsageDescription": "Partager une photo de la terrasse",
         "UIBackgroundModes": [
           "remote-notification",
-          "remote-notification"
+          "location"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }

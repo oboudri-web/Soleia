@@ -1014,34 +1014,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  // ─── DEBUG overlay (à retirer une fois le bug markers résolu) ───
-  debugOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 9999,
-  },
-  debugBox: {
-    backgroundColor: 'rgba(0, 0, 0, 0.78)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginHorizontal: 8,
-    marginTop: 4,
-    borderRadius: 8,
-  },
-  debugText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
-    fontWeight: '600',
-  },
-  debugTextSmall: {
-    color: '#9AE6B4',
-    fontSize: 9,
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
-    marginTop: 2,
-  },
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
