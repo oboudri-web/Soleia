@@ -1,0 +1,26 @@
+{
+  "cities": {
+    "Lyon": {
+      "cells": 64,
+      "inserted": 407,
+      "duplicates": 1589,
+      "blacklisted": 19
+    },
+    "Marseille": {
+      "cells": 144,
+      "inserted": 238,
+      "duplicates": 1379,
+      "blacklisted": 22
+    },
+    "Nantes": {
+      "cells": 56,
+      "inserted": 306,
+      "duplicates": 810,
+      "blacklisted": 10
+    }
+  },
+  "total_inserted": 951,
+  "total_dup": 3778,
+  "total_blacklisted": 51,
+  "total_cells": 264
+}
