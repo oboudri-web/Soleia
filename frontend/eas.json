@@ -55,7 +55,10 @@
       "android": {
         "buildType": "app-bundle"
       },
-      "channel": "production"
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_WEB_INSPECTOR": "true"
+      }
     }
   },
   "submit": {

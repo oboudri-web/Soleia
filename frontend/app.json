@@ -22,7 +22,11 @@
           "remote-notification",
           "location"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSBonjourServices": [
+          "_http._tcp"
+        ],
+        "UIWebViewInspectable": true
       }
     },
     "android": {

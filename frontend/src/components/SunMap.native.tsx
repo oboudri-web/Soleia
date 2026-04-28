@@ -305,6 +305,11 @@ export default function SunMap({
         mixedContentMode="always"
         thirdPartyCookiesEnabled
         cacheEnabled
+        // Enable Safari Web Inspector when EXPO_PUBLIC_WEB_INSPECTOR=true
+        // (set via eas.json env on the production profile during pre-launch
+        // debug builds). Disabled in App Store builds to keep WKWebView
+        // contents private. iOS 16.4+ uses isInspectable internally.
+        webviewDebuggingEnabled={process.env.EXPO_PUBLIC_WEB_INSPECTOR === 'true'}
         testID="sun-map-webview"
       />
       {!mapReady && (
