@@ -297,9 +297,12 @@ export default function SunMap({
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
         injectedJavaScriptBeforeContentLoaded={
-          'window.__SOLEIA_RN__ = true; window.__SOLEIA_MAPBOX_TOKEN__ = ' +
-          JSON.stringify(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '') +
-          '; true;'
+          'window.__SOLEIA_RN__ = true; ' +
+          'window.__SOLEIA_MAPBOX_TOKEN__ = ' +
+          JSON.stringify(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '') + '; ' +
+          'window.__SOLEIA_BACKEND_URL__ = ' +
+          JSON.stringify(process.env.EXPO_PUBLIC_BACKEND_URL || '') + '; ' +
+          'true;'
         }
         startInLoadingState={false}
         mixedContentMode="always"

@@ -507,7 +507,13 @@ export default function MapScreen() {
         return;
       }
 
-      const params: any = { limit: 200 };
+      // Bug 7: bigger default limit (500 instead of 200) so dense city zones
+      // don't get clipped. When the user has zoomed in close (spanLat < 0.012°,
+      // ~zoom level 15+ on a phone), drop the limit entirely so every terrace
+      // in the visible viewport is rendered.
+      const spanLat = mapBbox ? mapBbox.lat_max - mapBbox.lat_min : 999;
+      const isCloseZoom = spanLat < 0.012;
+      const params: any = { limit: isCloseZoom ? 5000 : 500 };
       if (typeFilter !== 'all') params.type = typeFilter;
       if (atTime) params.at_time = atTime;
       if (mapBbox) {
@@ -517,7 +523,8 @@ export default function MapScreen() {
         params.lng_max = mapBbox.lng_max;
       }
 
-      // Construire l'URL de debug pour l'overlay
+      // Construire l'URL de debug (relative — c'est uniquement pour le console.log,
+      // l'appel réel passe par api.listTerraces qui utilise EXPO_PUBLIC_BACKEND_URL).
       const dbgUrl =
         '/api/terraces?' +
         Object.entries(params)

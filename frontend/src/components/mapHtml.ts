@@ -193,8 +193,8 @@ export const MAP_HTML = `<!DOCTYPE html>
             type: 'geojson',
             data: { type: 'FeatureCollection', features: [] },
             cluster: true,
-            clusterMaxZoom: 15,
-            clusterRadius: 50,
+            clusterMaxZoom: 14,    // beyond zoom 14 → individual markers (no clustering)
+            clusterRadius: 25,     // tighter clusters → fewer false-merge of nearby terraces
             clusterProperties: {
               // sum of 'sunny' (1/0) per child feature - cluster has any sunny if > 0
               sunny: ['+', ['get', 'sunny']],
@@ -248,41 +248,85 @@ export const MAP_HTML = `<!DOCTYPE html>
             },
           });
 
-          // ----- Sun status markers — native Mapbox circles ------------------
-          // Previous attempts used SVG inline + map.addImage() which is flaky
-          // in iOS WKWebView (silent failures, no icon renders). Native 'circle'
-          // layers work 100% reliably on every platform.
-          //   - yellow  #F5A623  → sunny
-          //   - gold    #FFD700  → soon
-          //   - grey    #9E9E9E  → shade
-          // Radius 10 px + 2 px white halo → ~24 px effective target, easy to tap.
-          map.addLayer({
-            id: 'soleia-unclustered',
-            type: 'circle',
-            source: 'soleia-terraces',
-            filter: ['!', ['has', 'point_count']],
-            paint: {
-              'circle-radius': 10,
-              'circle-color': [
-                'case',
-                ['==', ['get', 'sunny'], 1], '#F5A623',
-                ['==', ['get', 'soonSunny'], 1], '#FFD700',
-                '#9E9E9E',
-              ],
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#FFFFFF',
-              'circle-opacity': 0.95,
-            },
+          // ----- Sun status markers — HTML mapboxgl.Marker() pure emoji ------
+          // Replaces the previous circle layer. Reasons:
+          //   - SVG via map.addImage() silently fails on iOS WKWebView
+          //   - emoji via 'text-field' in symbol layer is also unreliable on iOS
+          //   - HTML markers (DOM elements above the canvas) ALWAYS render: the
+          //     OS draws the emoji directly via UIKit / CoreText.
+          //
+          // Strategy:
+          //   1. Source clustering still active (clusterRadius:25, clusterMaxZoom:14)
+          //   2. We listen to source 'data' / 'moveend' and call querySourceFeatures
+          //   3. For each unclustered feature → create / reuse a mapboxgl.Marker(el)
+          //   4. Recycle markers across moves (cache by id) to avoid DOM thrash.
+          //
+          // Visual:
+          //   sunny → ☀️ on yellow disc #F5A623
+          //   soon  → 🌤️ on light orange #FFD700
+          //   shade → ⚫ (or just grey disc #9E9E9E)
+          //   target size: 28 px, easy to tap.
+          var markerCache = {};   // id -> mapboxgl.Marker
+          function buildMarkerEl(props) {
+            var el = document.createElement('div');
+            el.className = 'soleia-marker';
+            var status = (props.sunny === 1) ? 'sunny' : (props.soonSunny === 1 ? 'soon' : 'shade');
+            var bg = status === 'sunny' ? '#F5A623' : (status === 'soon' ? '#FFD700' : '#9E9E9E');
+            var emoji = status === 'sunny' ? '\u2600\uFE0F' : (status === 'soon' ? '\uD83C\uDF24\uFE0F' : '');
+            el.style.cssText =
+              'width:28px;height:28px;border-radius:14px;background:' + bg + ';' +
+              'display:flex;align-items:center;justify-content:center;' +
+              'font-size:16px;line-height:1;color:#fff;' +
+              'border:2px solid #FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.35);' +
+              'cursor:pointer;will-change:transform;-webkit-tap-highlight-color:transparent;';
+            el.textContent = emoji;
+            el.dataset.tid = props.id;
+            el.addEventListener('click', function (e) {
+              e.stopPropagation();
+              postToRN({ type: 'markerPress', id: props.id });
+            });
+            return el;
+          }
+          function syncHtmlMarkers() {
+            try {
+              var src = map.getSource('soleia-terraces');
+              if (!src || !src._data) return;
+              var features = src._data.features || [];
+              var stillVisible = {};
+              for (var i = 0; i < features.length; i++) {
+                var f = features[i];
+                if (!f || !f.properties || f.properties.id == null) continue;
+                if (f.properties.cluster) continue;  // ignore cluster aggregates
+                var id = String(f.properties.id);
+                stillVisible[id] = 1;
+                var existing = markerCache[id];
+                if (existing) {
+                  existing.setLngLat(f.geometry.coordinates);
+                } else {
+                  var el = buildMarkerEl(f.properties);
+                  var m = new mapboxgl.Marker({ element: el, anchor: 'center' })
+                    .setLngLat(f.geometry.coordinates)
+                    .addTo(map);
+                  markerCache[id] = m;
+                }
+              }
+              for (var id2 in markerCache) {
+                if (!stillVisible[id2]) {
+                  markerCache[id2].remove();
+                  delete markerCache[id2];
+                }
+              }
+            } catch (eSync) {
+              postToRN({ type: 'error', msg: 'syncHtmlMarkers ' + eSync.message });
+            }
+          }
+          // Re-sync on every viewport change AND on data updates
+          map.on('moveend', syncHtmlMarkers);
+          map.on('zoomend', syncHtmlMarkers);
+          map.on('sourcedata', function (e) {
+            if (e.sourceId === 'soleia-terraces' && e.isSourceLoaded) syncHtmlMarkers();
           });
-
-          // Click handler on individual markers (wired once here)
-          map.on('click', 'soleia-unclustered', function (e) {
-            var f = (e.features || [])[0];
-            if (!f) return;
-            postToRN({ type: 'markerPress', id: f.properties.id });
-          });
-          map.on('mouseenter', 'soleia-unclustered', function () { map.getCanvas().style.cursor = 'pointer'; });
-          map.on('mouseleave', 'soleia-unclustered', function () { map.getCanvas().style.cursor = ''; });
+          window.__soleiaSyncMarkers = syncHtmlMarkers;
           postToRN({ type: 'iconsReady' });
 
           // Click cluster -> zoom in
