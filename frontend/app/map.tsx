@@ -511,7 +511,6 @@ export default function MapScreen() {
       // don't get clipped. When the user has zoomed in close (spanLat < 0.012°,
       // ~zoom level 15+ on a phone), drop the limit entirely so every terrace
       // in the visible viewport is rendered.
-      const spanLat = mapBbox ? mapBbox.lat_max - mapBbox.lat_min : 999;
       const isCloseZoom = spanLat < 0.012;
       const params: any = { limit: isCloseZoom ? 5000 : 500 };
       if (typeFilter !== 'all') params.type = typeFilter;
