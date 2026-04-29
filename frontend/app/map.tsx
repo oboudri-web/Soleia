@@ -113,26 +113,6 @@ export default function MapScreen() {
   const [sliderExpanded, setSliderExpanded] = useState(false);
   void sliderExpanded; void setSliderExpanded;
 
-  // ── Debug HUD (PR A.1 — markers natifs invisibles) ────────────────────────
-  // Affiche un petit badge en haut de l'écran montrant en temps réel
-  // combien de features sont envoyées au composant carte natif. Utile pour
-  // diagnostiquer si le problème vient du fetch API, du filtre, ou du rendu
-  // natif Mapbox. À retirer une fois PR A validée.
-  const [mapDebug, setMapDebug] = useState<{ rnSent: number; rendered: number; lastErr?: string }>({
-    rnSent: 0,
-    rendered: 0,
-  });
-  const handleMarkersUpdate = useCallback(
-    (info: { rnSent?: number; webViewReceived?: number; markersRendered?: number }) => {
-      setMapDebug((prev) => ({
-        rnSent: info.rnSent ?? prev.rnSent,
-        rendered: info.markersRendered ?? prev.rendered,
-        lastErr: prev.lastErr,
-      }));
-    },
-    [],
-  );
-
   // @gorhom/bottom-sheet integration — 3 snap points: 10% (handle only), 50% (half), 90% (full)
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['10%', '50%', '90%'], []);
@@ -724,37 +704,11 @@ export default function MapScreen() {
           focusCoords={focusCoords}
           forceDark={mapIsDark}
           onRegionChange={onMapRegionChange}
-          onMarkersUpdate={handleMarkersUpdate}
           shadowPolygons={shadowPolygons}
           enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
         />
       </View>
-
-      {/* ── DEBUG HUD (PR A.1) — markers natifs invisibles ───────────────────
-          Petit badge en haut-gauche (sous safe area) montrant en live la
-          chaîne de données : terraces fetched → filtrées → envoyées au natif.
-          Si rnSent>0 mais rien ne s'affiche → le bug est dans CircleLayer.
-          Si rnSent=0 → le bug est dans loadData() / filteredTerraces.
-          À retirer une fois PR A validée par l'utilisateur. */}
-      <SafeAreaView
-        edges={['top']}
-        pointerEvents="none"
-        style={styles.debugHudWrap}
-      >
-        <View style={styles.debugHud}>
-          <Text style={styles.debugHudText}>
-            🐛 fetched={terraces.length} · filtered={filteredTerraces.length} · rnSent={mapDebug.rnSent} · rendered={mapDebug.rendered}
-          </Text>
-          {mapBbox ? (
-            <Text style={styles.debugHudTextSmall}>
-              bbox=[{mapBbox.lat_min.toFixed(3)},{mapBbox.lng_min.toFixed(3)} → {mapBbox.lat_max.toFixed(3)},{mapBbox.lng_max.toFixed(3)}]
-            </Text>
-          ) : (
-            <Text style={styles.debugHudTextSmall}>bbox=null (waiting…)</Text>
-          )}
-        </View>
-      </SafeAreaView>
 
       {/* Top overlay: SunSeekr-style compact header + slider+search row + filter pills */}
       <SafeAreaView style={styles.topOverlay} edges={['top']} pointerEvents="box-none">
@@ -1065,36 +1019,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-  },
-  // ── Debug HUD (PR A.1 — markers natifs) ──────────────────────────────────
-  debugHudWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 9999,
-    elevation: 9999,
-  },
-  debugHud: {
-    backgroundColor: 'rgba(0,0,0,0.78)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginTop: 4,
-    maxWidth: '94%',
-  },
-  debugHudText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  debugHudTextSmall: {
-    color: '#A0A0A0',
-    fontSize: 9,
-    textAlign: 'center',
-    marginTop: 2,
   },
   topRow: {
     flexDirection: 'row',

@@ -11,15 +11,6 @@
  *       └─ <Mapbox.CircleLayer>   : cercles markers individuels (orange / jaune / gris)
  *
  * PR B (à venir) ajoutera une WebView TRANSPARENTE par-dessus pour ShadeMap.
- *
- * NOTE PR A.1 (debug markers invisibles):
- *   - Properties STRING-based (sunStatus: 'sunny'|'soon'|'shade') au lieu de
- *     numeric flags — plus stable avec @rnmapbox/maps v10 + New Architecture.
- *   - Camera explicite (centerCoordinate + zoomLevel) au lieu de defaultSettings,
- *     car defaultSettings ne s'applique pas toujours en Fabric/iOS.
- *   - onDidFinishLoadingStyle log pour confirmer que le style Mapbox est prêt
- *     avant que les ShapeSource/CircleLayer s'attachent.
- *   - circleStrokeWidth bumped à 3px pour halo bien visible (Retina).
  */
 import React, { useEffect, useMemo, useRef, useCallback } from 'react';
 import { StyleSheet } from 'react-native';
@@ -41,6 +32,7 @@ Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '');
 Mapbox.setTelemetryEnabled(false);
 
 type LatLng = { lat: number; lng: number };
+type Bbox = { lat_min: number; lat_max: number; lng_min: number; lng_max: number };
 
 type Props = {
   terraces: Terrace[];
@@ -72,46 +64,27 @@ export default function SunMap({
   const cameraRef = useRef<Camera | null>(null);
 
   // ── Build GeoJSON FeatureCollection from terraces ──────────────────────────
-  // Properties sent natively MUST be JSON-serializable primitives. We use
-  // string-typed `sunStatus` to avoid any boolean/number coercion across
-  // the JSI bridge in New Architecture.
   const featureCollection = useMemo<FeatureCollection<Point>>(() => {
     const features: Feature<Point>[] = [];
     let valid = 0;
-    let dropped = 0;
     for (const t of terraces) {
       const lat = Number(t.lat);
       const lng = Number(t.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        dropped++;
-        continue;
-      }
-      if (lat < -85 || lat > 85 || lng < -180 || lng > 180) {
-        dropped++;
-        continue;
-      }
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      if (lat < -85 || lat > 85 || lng < -180 || lng > 180) continue;
       valid++;
-      // Normalize sun_status to one of: 'sunny' | 'soon' | 'shade'.
-      // Backend may emit 'soon_sunny' (legacy alias) — collapse to 'soon'.
-      let sunStatus: 'sunny' | 'soon' | 'shade' = 'shade';
-      const rawStatus = String(t.sun_status ?? '');
-      if (rawStatus === 'sunny') sunStatus = 'sunny';
-      else if (rawStatus === 'soon' || rawStatus === 'soon_sunny') sunStatus = 'soon';
       features.push({
         type: 'Feature',
         properties: {
           id: t.id,
           name: t.name,
-          sunStatus,
+          sunny: t.sun_status === 'sunny' ? 1 : 0,
+          soonSunny: t.sun_status === 'soon_sunny' ? 1 : 0,
           selected: t.id === selectedId ? 1 : 0,
         },
         geometry: { type: 'Point', coordinates: [lng, lat] },
       });
     }
-    // eslint-disable-next-line no-console
-    console.log(
-      `[SunMap.native] 📍 GeoJSON built: valid=${valid} dropped=${dropped} total=${terraces.length}`,
-    );
     onMarkersUpdate?.({ rnSent: valid, webViewReceived: valid, markersRendered: valid });
     return { type: 'FeatureCollection', features };
   }, [terraces, selectedId, onMarkersUpdate]);
@@ -128,13 +101,10 @@ export default function SunMap({
 
   // ── Emit bbox + zoom on every region settle ────────────────────────────────
   const handleCameraChanged = useCallback(
-    async (e: { properties: { bounds?: { ne: number[]; sw: number[] }; zoom: number } }) => {
+    async (e: { properties: { bounds: { ne: number[]; sw: number[] }; zoom: number } }) => {
       try {
-        const bounds = e?.properties?.bounds;
-        if (!bounds) return;
-        const ne = bounds.ne;
-        const sw = bounds.sw;
-        if (!Array.isArray(ne) || !Array.isArray(sw)) return;
+        const ne = e.properties.bounds.ne;
+        const sw = e.properties.bounds.sw;
         onRegionChange?.({
           lng_min: Math.min(ne[0], sw[0]),
           lng_max: Math.max(ne[0], sw[0]),
@@ -173,12 +143,6 @@ export default function SunMap({
     [terraces, onMarkerPress],
   );
 
-  // ── Style/lifecycle log: confirm the Mapbox style is fully loaded ──────────
-  const handleDidFinishLoadingStyle = useCallback(() => {
-    // eslint-disable-next-line no-console
-    console.log('[SunMap.native] 🎨 didFinishLoadingStyle');
-  }, []);
-
   return (
     <MapView
       ref={mapRef}
@@ -190,15 +154,15 @@ export default function SunMap({
       attributionEnabled={false}
       scaleBarEnabled={false}
       onCameraChanged={handleCameraChanged}
-      onDidFinishLoadingStyle={handleDidFinishLoadingStyle}
       testID="sun-map-native"
     >
       <Camera
         ref={cameraRef}
-        centerCoordinate={[center.lng, center.lat]}
-        zoomLevel={13}
+        defaultSettings={{
+          centerCoordinate: [center.lng, center.lat],
+          zoomLevel: 13,
+        }}
         animationMode="easeTo"
-        animationDuration={0}
       />
 
       {userLocation ? <UserLocation visible androidRenderMode="normal" /> : null}
@@ -244,28 +208,21 @@ export default function SunMap({
             textAllowOverlap: true,
           }}
         />
-        {/* Individual unclustered markers — solid colored discs.
-            We use a `match` expression on string-typed `sunStatus` because it
-            ships through the JSI bridge more reliably than `case` + numeric
-            flags on @rnmapbox/maps v10 + Fabric. */}
+        {/* Individual unclustered markers — solid colored discs */}
         <CircleLayer
           id="soleia-unclustered"
           filter={['!', ['has', 'point_count']]}
           style={{
-            circleRadius: 12,
+            circleRadius: 11,
             circleColor: [
-              'match',
-              ['get', 'sunStatus'],
-              'sunny', '#F5A623',
-              'soon',  '#FFD700',
-              'shade', '#9E9E9E',
-              /* default */ '#FF3B30', // RED fallback → si on voit du rouge
-                                       //   = circleColor expression mal évaluée
-                                       //   = bug à corriger côté propriétés.
+              'case',
+              ['==', ['get', 'sunny'], 1], '#F5A623',
+              ['==', ['get', 'soonSunny'], 1], '#FFD700',
+              '#9E9E9E',
             ],
             circleStrokeColor: '#FFFFFF',
-            circleStrokeWidth: 3,
-            circleOpacity: 1,
+            circleStrokeWidth: 2.5,
+            circleOpacity: 0.96,
           }}
         />
       </ShapeSource>
