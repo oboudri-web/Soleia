@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.soleia.app",
-      "buildNumber": "105",
+      "buildNumber": "110",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Trouver les terrasses au soleil près de vous",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Recevoir les alertes terrasses ensoleillées même en arrière-plan",
