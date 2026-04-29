@@ -441,6 +441,28 @@ export default function MapScreen() {
 
   const onMapRegionChange = useCallback(
     (bbox: { lat_min: number; lat_max: number; lng_min: number; lng_max: number; zoom: number }) => {
+      // ── Sanity guard (iOS WebView) ──
+      // Au démarrage, certains moveend Mapbox arrivent pendant que le canvas
+      // WebView se redimensionne et renvoient des bounds énormes (toute la
+      // France). Ces régions seraient sinon écrites dans mapBbox et
+      // déclencheraient `tooFarZoomedOut` côté UI (= bottom sheet vide).
+      // On rejette tout ce qui est manifestement bogué.
+      if (
+        bbox == null ||
+        !Number.isFinite(bbox.lat_min) || !Number.isFinite(bbox.lat_max) ||
+        !Number.isFinite(bbox.lng_min) || !Number.isFinite(bbox.lng_max) ||
+        !Number.isFinite(bbox.zoom)
+      ) {
+        return;
+      }
+      const span = Math.max(bbox.lat_max - bbox.lat_min, bbox.lng_max - bbox.lng_min);
+      if (span > 1 || span <= 0 || bbox.zoom < 8) {
+        console.log(
+          `[map.region] ⚠️  ignoring bogus regionChange (span=${span.toFixed(3)}, zoom=${bbox.zoom.toFixed(1)})`,
+        );
+        return;
+      }
+
       if (bboxDebounceRef.current) clearTimeout(bboxDebounceRef.current);
       bboxDebounceRef.current = setTimeout(() => {
         const visibleLatSpan = bbox.lat_max - bbox.lat_min;

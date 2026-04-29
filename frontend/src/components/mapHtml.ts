@@ -345,16 +345,42 @@ export const MAP_HTML = `<!DOCTYPE html>
       });
 
       // ── Region change : on notifie RN du bbox visible (debounce côté RN) ──
+      //
+      // IMPORTANT (iOS WebView fix):
+      //   On attend que la carte soit STABILISEE (1er map.on idle) avant
+      //   de poster le 1er regionChange. Au tout debut, le canvas WebView
+      //   est encore en train de se redimensionner et getBounds renvoie
+      //   parfois des bounds enormes (toute la France) qui declenchent
+      //   tooFarZoomedOut cote RN et vident la liste des terrasses.
+      //
+      //   On filtre aussi tout bbox manifestement bogue (NaN, zoom < 8,
+      //   span > 1 deg lat/lng) -- ceinture+bretelles.
+      var firstIdleSeen = false;
+      map.once('idle', function () { firstIdleSeen = true; });
+
       map.on('moveend', function () {
         try {
+          if (!firstIdleSeen) return; // ignore les moveend pré-stabilisation
           var b = map.getBounds();
+          if (!b) return;
+          var south = b.getSouth(), north = b.getNorth();
+          var west = b.getWest(),  east = b.getEast();
+          var z = map.getZoom();
+          // Sanity checks
+          if (
+            !isFinite(south) || !isFinite(north) ||
+            !isFinite(west)  || !isFinite(east)  ||
+            !isFinite(z)
+          ) return;
+          if ((north - south) > 1 || (east - west) > 1) return; // bounds aberrantes
+          if (z < 8) return; // trop dezoomé, on n'envoie rien
           postToRN({
             type: 'regionChange',
-            lat_min: b.getSouth(),
-            lat_max: b.getNorth(),
-            lng_min: b.getWest(),
-            lng_max: b.getEast(),
-            zoom: map.getZoom(),
+            lat_min: south,
+            lat_max: north,
+            lng_min: west,
+            lng_max: east,
+            zoom: z,
           });
         } catch (eRC) {}
       });
