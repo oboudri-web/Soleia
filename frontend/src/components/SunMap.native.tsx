@@ -1,52 +1,56 @@
+/* eslint-disable */
 /**
- * Soleia - SunMap (native iOS/Android via @rnmapbox/maps).
+ * Soleia - SunMap (native: WebView + MapLibre + ShadeMap).
  *
- * Architecture (PR A):
- *   - <Mapbox.MapView>            : carte native (style satellite/streets)
- *   - <Mapbox.Camera>             : contrôle caméra (centre, zoom, focus)
- *   - <Mapbox.UserLocation>       : pin bleu utilisateur en temps réel
- *   - <Mapbox.ShapeSource>        : source GeoJSON avec clustering NATIF
- *       └─ <Mapbox.CircleLayer>   : cercles pour clusters
- *       └─ <Mapbox.SymbolLayer>   : nombre dans le cluster
- *       └─ <Mapbox.CircleLayer>   : cercles markers individuels (orange / jaune / gris)
- *
- * PR B (à venir) ajoutera une WebView TRANSPARENTE par-dessus pour ShadeMap.
+ * Architecture inspired by SunSeekr:
+ *   - Full-screen WebView hosts MapLibre GL JS + ShadeMap with CARTO Voyager
+ *     style and AWS terrarium DEM.
+ *   - Markers are NATIVE MapLibre markers (created in the WebView), not RN
+ *     overlays. This is dramatically more reliable on iOS (no projection
+ *     desync, no layout glitches, gestures fall through naturally).
+ *   - The RN component just owns the WebView and forwards 4 things to it:
+ *       1) the terrace list                  -> window.updateTerraces(...)
+ *       2) the slider time                   -> window.setShadeTime(ts)
+ *       3) the focus coords                  -> window.flyTo(...)
+ *       4) the selected terrace id           -> window.setSelected(id)
+ *     and listens back for marker taps + ShadeMap idle stats + diagnostics.
  */
-import React, { useEffect, useMemo, useRef, useCallback } from 'react';
-import { StyleSheet } from 'react-native';
-import Mapbox, {
-  MapView,
-  Camera,
-  ShapeSource,
-  CircleLayer,
-  SymbolLayer,
-  UserLocation,
-  StyleURL,
-} from '@rnmapbox/maps';
-import type { Feature, FeatureCollection, Point } from 'geojson';
-
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, Text } from 'react-native';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
+import { MAP_HTML } from './mapHtml';
 import type { Terrace } from '../api';
-
-Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '');
-// Optional perf hints
-Mapbox.setTelemetryEnabled(false);
-
-type LatLng = { lat: number; lng: number };
-type Bbox = { lat_min: number; lat_max: number; lng_min: number; lng_max: number };
 
 type Props = {
   terraces: Terrace[];
-  center: LatLng;
-  selectedId: string | null;
+  center: { lat: number; lng: number };
+  selectedId?: string | null;
   onMarkerPress: (terrace: Terrace) => void;
-  userLocation: LatLng | null;
-  focusCoords?: LatLng | null;
-  forceDark?: boolean;
-  onRegionChange?: (info: { lat_min: number; lat_max: number; lng_min: number; lng_max: number; zoom: number }) => void;
-  onMarkersUpdate?: (info: { rnSent?: number; webViewReceived?: number; markersRendered?: number }) => void;
-  shadowPolygons?: unknown[];
-  enableLegacyShadows?: boolean;
+  userLocation?: { lat: number; lng: number } | null;
+  focusCoords?: { lat: number; lng: number } | null;
+  forceDark?: boolean; // unused (kept for parent API compat)
+  onRegionChange?: (bbox: {
+    lat_min: number;
+    lat_max: number;
+    lng_min: number;
+    lng_max: number;
+    zoom: number;
+  }) => void;
+  shadowPolygons?: Array<Array<[number, number]>>; // unused
+  enableLegacyShadows?: boolean; // unused
   currentMinutes?: number;
+  /** Optional GeoJSON FeatureCollection of terrace polygons. */
+  polygonsGeoJSON?: any;
+  /** Optional callback fired every ShadeMap idle pass. */
+  onShadeIdle?: (stats: { sunny: number; shaded: number; total: number }) => void;
+  /** Optional callback when ShadeMap reports a per-terrace sun update. */
+  onSunUpdate?: (id: string, sunny: boolean) => void;
+  /** Optional callback for live debug overlay (pipeline RN→WebView→Mapbox). */
+  onMarkersUpdate?: (info: {
+    rnSent?: number;
+    webViewReceived?: number;
+    markersRendered?: number;
+  }) => void;
 };
 
 export default function SunMap({
@@ -56,176 +60,276 @@ export default function SunMap({
   onMarkerPress,
   userLocation,
   focusCoords,
-  forceDark,
-  onRegionChange,
+  currentMinutes,
+  polygonsGeoJSON,
+  onShadeIdle,
+  onSunUpdate,
   onMarkersUpdate,
+  onRegionChange,
 }: Props) {
-  const mapRef = useRef<MapView | null>(null);
-  const cameraRef = useRef<Camera | null>(null);
+  const webRef = useRef<WebView>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [shadeReady, setShadeReady] = useState(false);
+  const lastSentTerracesKeyRef = useRef<string>('');
+  const shadeDebounceRef = useRef<any>(null);
 
-  // ── Build GeoJSON FeatureCollection from terraces ──────────────────────────
-  const featureCollection = useMemo<FeatureCollection<Point>>(() => {
-    const features: Feature<Point>[] = [];
-    let valid = 0;
-    for (const t of terraces) {
-      const lat = Number(t.lat);
-      const lng = Number(t.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-      if (lat < -85 || lat > 85 || lng < -180 || lng > 180) continue;
-      valid++;
-      features.push({
-        type: 'Feature',
-        properties: {
-          id: t.id,
-          name: t.name,
-          sunny: t.sun_status === 'sunny' ? 1 : 0,
-          soonSunny: t.sun_status === 'soon_sunny' ? 1 : 0,
-          selected: t.id === selectedId ? 1 : 0,
-        },
-        geometry: { type: 'Point', coordinates: [lng, lat] },
-      });
-    }
-    onMarkersUpdate?.({ rnSent: valid, webViewReceived: valid, markersRendered: valid });
-    return { type: 'FeatureCollection', features };
-  }, [terraces, selectedId, onMarkersUpdate]);
-
-  // ── Recenter camera when focusCoords changes (selected pin) ────────────────
-  useEffect(() => {
-    if (!focusCoords || !cameraRef.current) return;
-    cameraRef.current.setCamera({
-      centerCoordinate: [focusCoords.lng, focusCoords.lat],
-      zoomLevel: 16,
-      animationDuration: 600,
-    });
-  }, [focusCoords]);
-
-  // ── Emit bbox + zoom on every region settle ────────────────────────────────
-  const handleCameraChanged = useCallback(
-    async (e: { properties: { bounds: { ne: number[]; sw: number[] }; zoom: number } }) => {
+  const onMessage = useCallback(
+    (ev: WebViewMessageEvent) => {
       try {
-        const ne = e.properties.bounds.ne;
-        const sw = e.properties.bounds.sw;
-        onRegionChange?.({
-          lng_min: Math.min(ne[0], sw[0]),
-          lng_max: Math.max(ne[0], sw[0]),
-          lat_min: Math.min(ne[1], sw[1]),
-          lat_max: Math.max(ne[1], sw[1]),
-          zoom: e.properties.zoom,
-        });
-      } catch {
-        /* swallow — onCameraChanged sometimes emits without bounds during animations */
+        const data = JSON.parse(ev.nativeEvent.data);
+        switch (data.type) {
+          case 'cssInjected':
+            console.log('[soleia.web] css injected (' + data.size + ' bytes)');
+            break;
+          case 'maplibreInjected':
+            console.log(
+              '[soleia.web] maplibre injected (' + data.size + ' bytes, hasGlobal=' + data.hasGlobal + ')',
+            );
+            break;
+          case 'shadeMapInjected':
+            console.log(
+              '[soleia.web] shademap injected (' + data.size + ' bytes, hasGlobal=' + data.hasGlobal + ')',
+            );
+            break;
+          case 'htmlLoaded':
+            console.log('[soleia.web] HTML loaded');
+            break;
+          case 'styleLoaded':
+            console.log('[soleia.map] style loaded - ' + data.url);
+            break;
+          case 'mapReady':
+            console.log('[soleia.web] [OK] MapLibre ready');
+            setMapReady(true);
+            break;
+          case 'shadeMapReady':
+            console.log('[soleia.shademap] ready - licensed: ' + (data.licensed ? 'true' : 'false'));
+            setShadeReady(true);
+            break;
+          case 'markersAdded':
+            console.log(
+              '[soleia.markers] ' + data.count + ' markers added at zoom ' + data.zoom,
+            );
+            break;
+          case 'polygonsUpdated':
+            console.log('[soleia.polygons] updated count=' + data.count);
+            break;
+          case 'buildingRoofTranslated':
+            console.log(
+              '[soleia.map] building-top fill-translate applied: layers=[' +
+                (data.layers || []).join(',') + '] sourceUsed=' + (data.sourceUsed || 'native'),
+            );
+            break;
+          case 'shadeIdle':
+            console.log(
+              '[soleia.shade] idle - updated ' + data.total + ' markers - ' +
+                data.sunny + ' sunny / ' + data.shaded + ' shaded',
+            );
+            if (onShadeIdle) onShadeIdle({ sunny: data.sunny, shaded: data.shaded, total: data.total });
+            break;
+          case 'sunUpdate':
+            if (onSunUpdate) onSunUpdate(data.id, !!data.sunny);
+            break;
+          case 'markerPress': {
+            try {
+              const t = terraces.find((x) => x.id === data.id);
+              if (t) onMarkerPress(t);
+            } catch (errMP) {
+              console.warn('[soleia.web] markerPress handler crashed:', errMP);
+            }
+            break;
+          }
+          case 'mapError':
+            console.warn('[soleia.web] map error:', data.msg);
+            break;
+          case 'regionChange':
+            if (onRegionChange) {
+              onRegionChange({
+                lat_min: data.lat_min,
+                lat_max: data.lat_max,
+                lng_min: data.lng_min,
+                lng_max: data.lng_max,
+                zoom: data.zoom,
+              });
+            }
+            break;
+          case 'terracesReceived':
+            console.log('[soleia.web] [DBG] WebView received ' + data.count + ' terraces');
+            if (onMarkersUpdate) onMarkersUpdate({ webViewReceived: data.count });
+            break;
+          case 'terracesAck':
+            console.log('[soleia.web] [DBG] WebView pushed ' + data.count + ' features to source');
+            if (onMarkersUpdate) onMarkersUpdate({ markersRendered: data.count });
+            break;
+          case 'error':
+            console.warn('[soleia.web] error:', data.msg);
+            break;
+          case 'shadeLog':
+            // Verbose - keep silent unless investigating
+            break;
+          default:
+            break;
+        }
+      } catch (e) {
+        // non-JSON message - ignore
       }
     },
-    [onRegionChange],
+    [terraces, onMarkerPress, onShadeIdle, onSunUpdate],
   );
 
-  // ── Press handler on the ShapeSource → either expand cluster or open card ──
-  const handleShapePress = useCallback(
-    async (e: { features: Feature[] }) => {
-      const f = e.features?.[0];
-      if (!f) return;
-      const props = (f.properties || {}) as Record<string, unknown>;
-      // Cluster: expand by zooming in
-      if (props.cluster) {
-        const coords = (f.geometry as Point).coordinates;
-        cameraRef.current?.setCamera({
-          centerCoordinate: coords,
-          zoomLevel: ((props.cluster_id as number | undefined) ?? 0) > 0 ? undefined : 14,
-          animationDuration: 500,
-        });
-        return;
-      }
-      // Individual marker: open terrace card
-      const id = String(props.id);
-      const t = terraces.find((x) => x.id === id);
-      if (t) onMarkerPress(t);
-    },
-    [terraces, onMarkerPress],
-  );
+  // Push terraces to the WebView whenever they change AND map is ready
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const slim = terraces
+      .filter(
+        (t) =>
+          typeof t.lat === 'number' &&
+          typeof t.lng === 'number' &&
+          !isNaN(t.lat) &&
+          !isNaN(t.lng),
+      )
+      .map((t) => ({
+        id: t.id,
+        lat: t.lat,
+        lng: t.lng,
+        sun_status: t.sun_status,
+        type: (t as any).type || 'cafe',
+        name: t.name,
+      }));
+    const key = JSON.stringify(slim.map((t) => t.id + ':' + t.sun_status + ':' + t.type));
+    if (key === lastSentTerracesKeyRef.current) return;
+    lastSentTerracesKeyRef.current = key;
+    const payload = JSON.stringify(slim);
+    webRef.current.injectJavaScript(
+      'try { window.updateTerraces(' + payload + '); } catch(e){} true;',
+    );
+    console.log('[soleia.rn] sent ' + slim.length + ' terraces to WebView');
+    if (onMarkersUpdate) onMarkersUpdate({ rnSent: slim.length });
+  }, [terraces, mapReady]);
+
+  // Push polygons whenever they change
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const payload = JSON.stringify(polygonsGeoJSON || { type: 'FeatureCollection', features: [] });
+    webRef.current.injectJavaScript(
+      'try { window.updatePolygons(' + payload + '); } catch(e){} true;',
+    );
+  }, [polygonsGeoJSON, mapReady]);
+
+  // Recenter on city change
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    if (typeof center?.lat !== 'number' || typeof center?.lng !== 'number') return;
+    webRef.current.injectJavaScript(
+      'try { window.setCenter(' + center.lat + ', ' + center.lng + ', 15); } catch(e){} true;',
+    );
+  }, [center?.lat, center?.lng, mapReady]);
+
+  // Push user location -> WebView (renders the blue pulsing puck)
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    if (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number') {
+      webRef.current.injectJavaScript(
+        'try { window.setUserLocation(' + userLocation.lat + ', ' + userLocation.lng + ', { recenter: true, zoom: 15 }); } catch(e){} true;',
+      );
+    } else {
+      webRef.current.injectJavaScript(
+        'try { window.setUserLocation(null); } catch(e){} true;',
+      );
+    }
+  }, [userLocation?.lat, userLocation?.lng, mapReady]);
+
+  // Fly to focus coords on demand
+  useEffect(() => {
+    if (!mapReady || !webRef.current || !focusCoords) return;
+    webRef.current.injectJavaScript(
+      'try { window.flyTo(' + focusCoords.lat + ', ' + focusCoords.lng + ', 17); } catch(e){} true;',
+    );
+  }, [focusCoords?.lat, focusCoords?.lng, mapReady]);
+
+  // Tell WebView which marker is selected
+  useEffect(() => {
+    if (!mapReady || !webRef.current) return;
+    const idStr = selectedId ? JSON.stringify(selectedId) : 'null';
+    webRef.current.injectJavaScript(
+      'try { window.setSelected(' + idStr + '); } catch(e){} true;',
+    );
+  }, [selectedId, mapReady]);
+
+  // Bind currentMinutes (slider) -> ShadeMap.setDate (debounced 300ms)
+  useEffect(() => {
+    if (!shadeReady || !webRef.current || currentMinutes == null) return;
+    if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
+    shadeDebounceRef.current = setTimeout(() => {
+      const now = new Date();
+      const target = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        Math.floor(currentMinutes / 60),
+        currentMinutes % 60,
+        0,
+        0,
+      );
+      const ts = target.getTime();
+      webRef.current?.injectJavaScript(
+        'try { window.setShadeTime(' + ts + '); } catch(e){} true;',
+      );
+    }, 300);
+    return () => {
+      if (shadeDebounceRef.current) clearTimeout(shadeDebounceRef.current);
+    };
+  }, [currentMinutes, shadeReady]);
 
   return (
-    <MapView
-      ref={mapRef}
-      style={StyleSheet.absoluteFill}
-      styleURL={forceDark ? StyleURL.Dark : StyleURL.Street}
-      compassEnabled
-      compassPosition={{ top: 88, right: 12 }}
-      logoEnabled={false}
-      attributionEnabled={false}
-      scaleBarEnabled={false}
-      onCameraChanged={handleCameraChanged}
-      testID="sun-map-native"
-    >
-      <Camera
-        ref={cameraRef}
-        defaultSettings={{
-          centerCoordinate: [center.lng, center.lat],
-          zoomLevel: 13,
-        }}
-        animationMode="easeTo"
+    <View style={styles.container}>
+      <WebView
+        ref={webRef}
+        style={StyleSheet.absoluteFill}
+        originWhitelist={['*']}
+        source={{ html: MAP_HTML, baseUrl: 'https://localhost' }}
+        javaScriptEnabled
+        domStorageEnabled
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        onMessage={onMessage}
+        bounces={false}
+        scrollEnabled={false}
+        showsHorizontalScrollIndicator={false}
+        showsVerticalScrollIndicator={false}
+        injectedJavaScriptBeforeContentLoaded={
+          'window.__SOLEIA_RN__ = true; ' +
+          'window.__SOLEIA_MAPBOX_TOKEN__ = ' +
+          JSON.stringify(process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '') + '; ' +
+          'window.__SOLEIA_BACKEND_URL__ = ' +
+          JSON.stringify(process.env.EXPO_PUBLIC_BACKEND_URL || '') + '; ' +
+          'true;'
+        }
+        startInLoadingState={false}
+        mixedContentMode="always"
+        thirdPartyCookiesEnabled
+        cacheEnabled
+        // Enable Safari Web Inspector when EXPO_PUBLIC_WEB_INSPECTOR=true
+        // (set via eas.json env on the production profile during pre-launch
+        // debug builds). Disabled in App Store builds to keep WKWebView
+        // contents private. iOS 16.4+ uses isInspectable internally.
+        webviewDebuggingEnabled={process.env.EXPO_PUBLIC_WEB_INSPECTOR === 'true'}
+        testID="sun-map-webview"
       />
-
-      {userLocation ? <UserLocation visible androidRenderMode="normal" /> : null}
-
-      <ShapeSource
-        id="soleia-terraces"
-        shape={featureCollection}
-        cluster
-        clusterRadius={25}
-        clusterMaxZoomLevel={14}
-        onPress={handleShapePress}
-      >
-        {/* Cluster bubble (orange ring + warm fill) */}
-        <CircleLayer
-          id="soleia-clusters"
-          filter={['has', 'point_count']}
-          style={{
-            circleColor: '#F5A623',
-            circleStrokeColor: '#FFFFFF',
-            circleStrokeWidth: 2,
-            circleRadius: [
-              'interpolate',
-              ['linear'],
-              ['get', 'point_count'],
-              2, 18,
-              50, 30,
-              200, 40,
-            ],
-            circleOpacity: 0.92,
-          }}
-        />
-        {/* Cluster count label */}
-        <SymbolLayer
-          id="soleia-cluster-count"
-          filter={['has', 'point_count']}
-          style={{
-            textField: ['get', 'point_count_abbreviated'],
-            textSize: 13,
-            textColor: '#FFFFFF',
-            textHaloColor: '#00000033',
-            textHaloWidth: 0.4,
-            textIgnorePlacement: true,
-            textAllowOverlap: true,
-          }}
-        />
-        {/* Individual unclustered markers — solid colored discs */}
-        <CircleLayer
-          id="soleia-unclustered"
-          filter={['!', ['has', 'point_count']]}
-          style={{
-            circleRadius: 11,
-            circleColor: [
-              'case',
-              ['==', ['get', 'sunny'], 1], '#F5A623',
-              ['==', ['get', 'soonSunny'], 1], '#FFD700',
-              '#9E9E9E',
-            ],
-            circleStrokeColor: '#FFFFFF',
-            circleStrokeWidth: 2.5,
-            circleOpacity: 0.96,
-          }}
-        />
-      </ShapeSource>
-    </MapView>
+      {!mapReady && (
+        <View style={styles.loadingOverlay} pointerEvents="none">
+          <Text style={styles.loadingText}>Chargement de la carte...</Text>
+        </View>
+      )}
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f6f3ee' },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: { color: '#666', fontSize: 14, fontWeight: '500' },
+});
