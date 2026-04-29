@@ -4,7 +4,7 @@
  *
  * Architecture (post-revert PR A) :
  *   - Mapbox GL JS sert la carte de fond avec le style Streets v12
- *   - On garde UNIQUEMENT les POI natifs de classe `food_and_drink`
+ *   - On garde UNIQUEMENT les POI natifs de classe 'food_and_drink'
  *     (restaurants, bars, cafés, brasseries, etc.) — tout le reste
  *     (transit, parking, parks, hôtels, hôpitaux, magasins, etc.) est
  *     masqué pour ne pas polluer la carte
@@ -155,7 +155,7 @@ export const MAP_HTML = `<!DOCTYPE html>
         //
         // Mapbox Streets v12 organise tous ses POI dans des layers dont
         // l'id contient "poi" (poi-label, poi-label-other, etc.) avec la
-        // propriété `class` qui vaut entre autres :
+        // propriété 'class' qui vaut entre autres :
         //   food_and_drink            <- on garde
         //   food_and_drink_stores     <- on supprime (épiceries, marchés)
         //   transit / airport / ferry <- déjà masqués via id-keyword
