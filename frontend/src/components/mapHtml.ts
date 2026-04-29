@@ -1,21 +1,18 @@
 /* eslint-disable */
 /**
- * Soleia map HTML (Mapbox GL JS + ShadeMap).
+ * Soleia map HTML (Mapbox GL JS + ShadeMap) — VERSION SIMPLIFIÉE.
  *
- * This is a minimal adaptation of the official mapbox-gl-shadow-simulator
- * Mapbox example by Ted Piotrowski (creator of ShadeMap):
- *   https://github.com/spaste/mapbox-gl-shadow-simulator
+ * Architecture (post-revert PR A) :
+ *   - Mapbox GL JS sert la carte de fond avec le style Streets v12
+ *   - On garde UNIQUEMENT les POI natifs de classe `food_and_drink`
+ *     (restaurants, bars, cafés, brasseries, etc.) — tout le reste
+ *     (transit, parking, parks, hôtels, hôpitaux, magasins, etc.) est
+ *     masqué pour ne pas polluer la carte
+ *   - ShadeMap calcule les ombres en temps réel par-dessus
+ *   - Notre BDD de terrasses scrappées s'affiche dans la bottom-sheet
+ *     (et plus du tout sur la carte) — c'est notre valeur ajoutée
  *
- * Adaptations for Soleia:
- *   - Mapbox token + ShadeMap API key swapped for ours
- *   - Center on Nantes (-1.5536, 47.2184), zoom 15
- *   - Style mapbox://styles/mapbox/streets-v12
- *   - All UI control buttons removed
- *   - Mapbox GL JS 3.19.0 + ShadeMap UMD + Suncalc 1.9.0 + Mapbox CSS
- *     all inlined as base64 for offline iOS WebView use
- *   - Two RN bridge functions exposed:
- *       window.setShadeTime(timestamp) -> shadeMap.setDate(new Date(ts))
- *       window.ReactNativeWebView posts {type:'mapReady'} when map loads
+ * Plus de markers custom = plus de bugs d'affichage iOS.
  *
  * Two backticks total in this file (template open + close). NO backticks
  * inside any comment within the template. NO non-ASCII characters.
@@ -152,24 +149,59 @@ export const MAP_HTML = `<!DOCTYPE html>
       }
 
       map.on('load', function () {
-        // ----- Hide POI / transit / parking / bicycle / ferry / airport
-        // and most label layers (keep road labels for street names).
+        // ───────────────────────────────────────────────────────────────────
+        // POI cleanup : on garde UNIQUEMENT food_and_drink, on masque tout
+        // le reste (transit, parking, parks, lodging, shops, etc.).
+        //
+        // Mapbox Streets v12 organise tous ses POI dans des layers dont
+        // l'id contient "poi" (poi-label, poi-label-other, etc.) avec la
+        // propriété `class` qui vaut entre autres :
+        //   food_and_drink            <- on garde
+        //   food_and_drink_stores     <- on supprime (épiceries, marchés)
+        //   transit / airport / ferry <- déjà masqués via id-keyword
+        //   lodging / commercial_services / sport_and_leisure / park_like
+        //   medical / education / religion / etc.
+        //
+        // Stratégie :
+        //   1) Pour chaque layer dont l'id contient "poi" => setFilter pour
+        //      ne garder que les features où class == 'food_and_drink'.
+        //   2) Hide layers transit/parking/airport/ferry/bicycle (inchangé).
+        //   3) Hide tous les autres "label" non-routes (inchangé).
+        // ───────────────────────────────────────────────────────────────────
         try {
           var hideKeywords = [
-            'poi', 'transit', 'bus', 'tram', 'parking',
+            'transit', 'bus', 'tram', 'parking',
             'bicycle', 'airport', 'ferry',
           ];
-          // Labels we keep (road labels make street names readable)
           var keepLabelKeywords = ['road-label', 'road_label', 'road-name', 'street'];
           var hiddenCount = 0;
+          var poiFiltered = 0;
           var styleLayers = (map.getStyle().layers || []);
+
           for (var iH = 0; iH < styleLayers.length; iH++) {
             var lid = (styleLayers[iH].id || '').toLowerCase();
+
+            // ── A) POI layers : on filtre sur food_and_drink uniquement
+            if (lid.indexOf('poi') !== -1) {
+              try {
+                map.setFilter(styleLayers[iH].id, [
+                  '==', ['get', 'class'], 'food_and_drink'
+                ]);
+                map.setLayoutProperty(styleLayers[iH].id, 'visibility', 'visible');
+                poiFiltered++;
+              } catch (eFilter) {
+                // some symbol layers don't accept setFilter => hide them silently
+                try { map.setLayoutProperty(styleLayers[iH].id, 'visibility', 'none'); } catch (e2) {}
+              }
+              continue;
+            }
+
+            // ── B) Transit/parking/airport/ferry/bicycle : masqués
             var hide = false;
             for (var kH = 0; kH < hideKeywords.length; kH++) {
               if (lid.indexOf(hideKeywords[kH]) !== -1) { hide = true; break; }
             }
-            // Also hide any 'label' that is not a road label
+            // ── C) Autres "label" non-route : masqués
             if (!hide && lid.indexOf('label') !== -1) {
               var keep = false;
               for (var kK = 0; kK < keepLabelKeywords.length; kK++) {
@@ -182,178 +214,19 @@ export const MAP_HTML = `<!DOCTYPE html>
               catch (eHide) {}
             }
           }
-          postToRN({ type: 'layersHidden', count: hiddenCount, total: styleLayers.length });
+          postToRN({
+            type: 'layersHidden',
+            count: hiddenCount,
+            poiFiltered: poiFiltered,
+            total: styleLayers.length,
+          });
         } catch (eAll) {
-          postToRN({ type: 'error', msg: 'layer hide failed: ' + eAll.message });
+          postToRN({ type: 'error', msg: 'layer setup failed: ' + eAll.message });
         }
 
-        // ----- Terraces source with native Mapbox clustering -----------------
-        try {
-          map.addSource('soleia-terraces', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] },
-            cluster: true,
-            clusterMaxZoom: 14,    // beyond zoom 14 → individual markers (no clustering)
-            clusterRadius: 25,     // tighter clusters → fewer false-merge of nearby terraces
-            clusterProperties: {
-              // sum of 'sunny' (1/0) per child feature - cluster has any sunny if > 0
-              sunny: ['+', ['get', 'sunny']],
-              soonSunny: ['+', ['get', 'soonSunny']],
-            },
-          });
-
-          // Cluster bubble (orange if any sunny inside, white if any soonSunny, else grey)
-          map.addLayer({
-            id: 'soleia-clusters',
-            type: 'circle',
-            source: 'soleia-terraces',
-            filter: ['has', 'point_count'],
-            paint: {
-              'circle-color': [
-                'case',
-                ['>', ['get', 'sunny'], 0], '#F5A623',
-                ['>', ['get', 'soonSunny'], 0], '#FFFFFF',
-                '#9E9E9E',
-              ],
-              'circle-radius': [
-                'step', ['get', 'point_count'],
-                14,   // < 5
-                5, 18,
-                15, 22,
-                50, 26,
-              ],
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#FFFFFF',
-              'circle-opacity': 0.95,
-            },
-          });
-          map.addLayer({
-            id: 'soleia-cluster-count',
-            type: 'symbol',
-            source: 'soleia-terraces',
-            filter: ['has', 'point_count'],
-            layout: {
-              'text-field': ['get', 'point_count_abbreviated'],
-              'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-              'text-size': 13,
-              'text-allow-overlap': true,
-            },
-            paint: {
-              'text-color': [
-                'case',
-                ['>', ['get', 'sunny'], 0], '#FFFFFF',
-                ['>', ['get', 'soonSunny'], 0], '#333333',
-                '#FFFFFF',
-              ],
-            },
-          });
-
-          // ----- Sun status markers — HTML mapboxgl.Marker() pure emoji ------
-          // Replaces the previous circle layer. Reasons:
-          //   - SVG via map.addImage() silently fails on iOS WKWebView
-          //   - emoji via 'text-field' in symbol layer is also unreliable on iOS
-          //   - HTML markers (DOM elements above the canvas) ALWAYS render: the
-          //     OS draws the emoji directly via UIKit / CoreText.
-          //
-          // Strategy:
-          //   1. Source clustering still active (clusterRadius:25, clusterMaxZoom:14)
-          //   2. We listen to source 'data' / 'moveend' and call querySourceFeatures
-          //   3. For each unclustered feature → create / reuse a mapboxgl.Marker(el)
-          //   4. Recycle markers across moves (cache by id) to avoid DOM thrash.
-          //
-          // Visual:
-          //   sunny → ☀️ on yellow disc #F5A623
-          //   soon  → 🌤️ on light orange #FFD700
-          //   shade → ⚫ (or just grey disc #9E9E9E)
-          //   target size: 28 px, easy to tap.
-          var markerCache = {};   // id -> mapboxgl.Marker
-          function buildMarkerEl(props) {
-            var el = document.createElement('div');
-            el.className = 'soleia-marker';
-            var status = (props.sunny === 1) ? 'sunny' : (props.soonSunny === 1 ? 'soon' : 'shade');
-            var bg = status === 'sunny' ? '#F5A623' : (status === 'soon' ? '#FFD700' : '#9E9E9E');
-            var emoji = status === 'sunny' ? '\u2600\uFE0F' : (status === 'soon' ? '\uD83C\uDF24\uFE0F' : '');
-            el.style.cssText =
-              'width:28px;height:28px;border-radius:14px;background:' + bg + ';' +
-              'display:flex;align-items:center;justify-content:center;' +
-              'font-size:16px;line-height:1;color:#fff;' +
-              'border:2px solid #FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.35);' +
-              'cursor:pointer;will-change:transform;-webkit-tap-highlight-color:transparent;';
-            el.textContent = emoji;
-            el.dataset.tid = props.id;
-            el.addEventListener('click', function (e) {
-              e.stopPropagation();
-              postToRN({ type: 'markerPress', id: props.id });
-            });
-            return el;
-          }
-          function syncHtmlMarkers() {
-            try {
-              var src = map.getSource('soleia-terraces');
-              if (!src || !src._data) return;
-              var features = src._data.features || [];
-              var stillVisible = {};
-              for (var i = 0; i < features.length; i++) {
-                var f = features[i];
-                if (!f || !f.properties || f.properties.id == null) continue;
-                if (f.properties.cluster) continue;  // ignore cluster aggregates
-                var id = String(f.properties.id);
-                stillVisible[id] = 1;
-                var existing = markerCache[id];
-                if (existing) {
-                  existing.setLngLat(f.geometry.coordinates);
-                } else {
-                  var el = buildMarkerEl(f.properties);
-                  var m = new mapboxgl.Marker({ element: el, anchor: 'center' })
-                    .setLngLat(f.geometry.coordinates)
-                    .addTo(map);
-                  markerCache[id] = m;
-                }
-              }
-              for (var id2 in markerCache) {
-                if (!stillVisible[id2]) {
-                  markerCache[id2].remove();
-                  delete markerCache[id2];
-                }
-              }
-            } catch (eSync) {
-              postToRN({ type: 'error', msg: 'syncHtmlMarkers ' + eSync.message });
-            }
-          }
-          // Re-sync on every viewport change AND on data updates
-          map.on('moveend', syncHtmlMarkers);
-          map.on('zoomend', syncHtmlMarkers);
-          map.on('sourcedata', function (e) {
-            if (e.sourceId === 'soleia-terraces' && e.isSourceLoaded) syncHtmlMarkers();
-          });
-          window.__soleiaSyncMarkers = syncHtmlMarkers;
-          postToRN({ type: 'iconsReady' });
-
-          // Click cluster -> zoom in
-          map.on('click', 'soleia-clusters', function (e) {
-            var f = (e.features || [])[0];
-            if (!f) return;
-            var clusterId = f.properties.cluster_id;
-            var src = map.getSource('soleia-terraces');
-            if (!src || !src.getClusterExpansionZoom) return;
-            src.getClusterExpansionZoom(clusterId, function (err, zoom) {
-              if (err) return;
-              map.easeTo({ center: f.geometry.coordinates, zoom: zoom });
-            });
-          });
-
-          // Cursor feedback on web (no-op on iOS) — for clusters only.
-          // Marker click + cursor-on-marker is wired inside the SVG-icon
-          // Promise.all callback above (so the layer exists). Keeping a
-          // duplicate map.on('click', 'soleia-unclustered') here would fire
-          // markerPress TWICE per tap → double opening of the terrace card.
-          map.on('mouseenter', 'soleia-clusters', function () { map.getCanvas().style.cursor = 'pointer'; });
-          map.on('mouseleave', 'soleia-clusters', function () { map.getCanvas().style.cursor = ''; });
-        } catch (eClu) {
-          postToRN({ type: 'error', msg: 'cluster setup failed: ' + eClu.message });
-        }
-
-        // ----- User location source (blue puck with pulse) ------------------
+        // ───────────────────────────────────────────────────────────────────
+        // User location source (blue pulsing dot)
+        // ───────────────────────────────────────────────────────────────────
         try {
           map.addSource('soleia-user', {
             type: 'geojson',
@@ -381,7 +254,6 @@ export const MAP_HTML = `<!DOCTYPE html>
               'circle-stroke-color': '#FFFFFF',
             },
           });
-          // Animate the pulse halo radius (12 -> 24 -> 12) every 1.5s
           var pulseT = 0;
           setInterval(function () {
             try {
@@ -394,6 +266,9 @@ export const MAP_HTML = `<!DOCTYPE html>
           postToRN({ type: 'error', msg: 'user dot setup failed: ' + eU.message });
         }
 
+        // ───────────────────────────────────────────────────────────────────
+        // ShadeMap overlay
+        // ───────────────────────────────────────────────────────────────────
         try {
           shadeMap = new ShadeMap({
             apiKey: SHADEMAP_KEY,
@@ -437,6 +312,31 @@ export const MAP_HTML = `<!DOCTYPE html>
         } catch (e) {
           postToRN({ type: 'error', msg: 'ShadeMap init failed: ' + e.message });
         }
+
+        // ───────────────────────────────────────────────────────────────────
+        // POI tap → relayer vers RN avec le nom (si l'utilisateur clique
+        // sur un bar/resto Mapbox, on ouvre éventuellement la carte côté RN).
+        // ───────────────────────────────────────────────────────────────────
+        try {
+          map.on('click', function (e) {
+            var feats = map.queryRenderedFeatures(e.point, {
+              filter: ['==', ['get', 'class'], 'food_and_drink'],
+            });
+            if (!feats || !feats.length) return;
+            var f = feats[0];
+            var p = f.properties || {};
+            postToRN({
+              type: 'poiPress',
+              name: p.name || p.name_fr || p.name_en || '',
+              maki: p.maki || '',
+              lng: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[0] : null,
+              lat: f.geometry && f.geometry.coordinates ? f.geometry.coordinates[1] : null,
+            });
+          });
+        } catch (ePoi) {
+          postToRN({ type: 'error', msg: 'poi click setup failed: ' + ePoi.message });
+        }
+
         postToRN({ type: 'mapReady' });
       });
 
@@ -444,7 +344,7 @@ export const MAP_HTML = `<!DOCTYPE html>
         postToRN({ type: 'mapError', msg: ev && ev.error ? String(ev.error.message || ev.error) : 'unknown' });
       });
 
-      // ── Region change : notifie RN du bbox visible (debounce côté RN) ──
+      // ── Region change : on notifie RN du bbox visible (debounce côté RN) ──
       map.on('moveend', function () {
         try {
           var b = map.getBounds();
@@ -460,7 +360,9 @@ export const MAP_HTML = `<!DOCTYPE html>
       });
     }
 
-    // ----- Bridge functions exposed to React Native -------------------------
+    // ───────────────────────────────────────────────────────────────────────
+    // Bridge functions exposed to React Native
+    // ───────────────────────────────────────────────────────────────────────
 
     /** Set ShadeMap simulation date. Accepts ISO string or epoch ms. */
     window.setShadeTime = function (input) {
@@ -470,8 +372,6 @@ export const MAP_HTML = `<!DOCTYPE html>
         if (isNaN(d.getTime())) return;
         nowDate = d;
         shadeMap.setDate(d);
-        // Verbose log: report both the ISO (UTC) and the Europe/Paris-formatted
-        // local time so we can quickly spot timezone bugs.
         var localStr;
         try {
           localStr = d.toLocaleString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit',
@@ -493,51 +393,6 @@ export const MAP_HTML = `<!DOCTYPE html>
     window.flyTo = function (lat, lng, zoom) {
       if (!map) return;
       map.flyTo({ center: [lng, lat], zoom: zoom != null ? zoom : 16, duration: 800 });
-    };
-
-    /** Push the terraces list to the clustered GeoJSON source. */
-    window.updateTerraces = function (list) {
-      try {
-        var arr = Array.isArray(list) ? list : [];
-        // ── DEBUG : trace explicite côté WebView pour diagnostiquer le pipeline RN→WebView
-        console.log('[markers] received ' + arr.length + ' terraces');
-        postToRN({ type: 'terracesReceived', count: arr.length });
-
-        if (!map || !map.getSource('soleia-terraces')) {
-          console.warn('[markers] map or source not ready yet — list cached for later');
-          postToRN({ type: 'error', msg: 'updateTerraces: source not ready (map=' + !!map + ')' });
-          return;
-        }
-        var feats = [];
-        var skipped = 0;
-        for (var i = 0; i < arr.length; i++) {
-          var t = arr[i];
-          if (typeof t.lat !== 'number' || typeof t.lng !== 'number') { skipped++; continue; }
-          var sunny = t.sun_status === 'sunny' ? 1 : 0;
-          // ── Backend renvoie 'soon' (pas 'soon_sunny'). On accepte les deux pour rétro-compat.
-          var soonSunny = (t.sun_status === 'soon' || t.sun_status === 'soon_sunny' || t.upcoming_sunny) ? 1 : 0;
-          feats.push({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [t.lng, t.lat] },
-            properties: {
-              id: t.id,
-              name: t.name,
-              sunny: sunny,
-              soonSunny: soonSunny,
-              type: t.type || 'cafe',
-            },
-          });
-        }
-        console.log('[markers] features built: ' + feats.length + ' (skipped=' + skipped + '), pushing to source soleia-terraces');
-        map.getSource('soleia-terraces').setData({
-          type: 'FeatureCollection',
-          features: feats,
-        });
-        postToRN({ type: 'terracesAck', count: feats.length });
-      } catch (e) {
-        console.warn('[markers] updateTerraces threw:', e);
-        postToRN({ type: 'error', msg: 'updateTerraces failed: ' + e.message });
-      }
     };
 
     /** Set the user-location blue puck (pulsing halo). Pass null to clear. */
@@ -568,32 +423,28 @@ export const MAP_HTML = `<!DOCTYPE html>
       }
     };
 
-    /** Convenience: update the markers' sun_status without rebuilding all features. */
-    window.updateSunStatus = function (updates) {
+    /**
+     * No-op kept for RN parent compat. The terrace list is no longer
+     * rendered on the map (only in the bottom sheet). Custom markers
+     * have been removed to eliminate iOS rendering bugs.
+     */
+    window.updateTerraces = function (_list) {
       try {
-        if (!map || !map.getSource('soleia-terraces') || !Array.isArray(updates)) return;
-        var current = map.getSource('soleia-terraces')._data;
-        if (!current || !current.features) return;
-        var byId = {};
-        for (var u = 0; u < updates.length; u++) byId[updates[u].id] = updates[u];
-        var changed = 0;
-        for (var i = 0; i < current.features.length; i++) {
-          var f = current.features[i];
-          var up = byId[f.properties && f.properties.id];
-          if (!up) continue;
-          var newSunny = up.sun_status === 'sunny' ? 1 : 0;
-          var newSoon = (up.sun_status === 'soon_sunny' || up.upcoming_sunny) ? 1 : 0;
-          if (f.properties.sunny !== newSunny || f.properties.soonSunny !== newSoon) {
-            f.properties.sunny = newSunny;
-            f.properties.soonSunny = newSoon;
-            changed++;
-          }
-        }
-        if (changed > 0) map.getSource('soleia-terraces').setData(current);
-      } catch (e) {
-        postToRN({ type: 'error', msg: 'updateSunStatus failed: ' + e.message });
-      }
+        var n = Array.isArray(_list) ? _list.length : 0;
+        // Acknowledge so the RN debug overlay does not stay at "rnSent>0,rendered=0".
+        postToRN({ type: 'terracesReceived', count: n });
+        postToRN({ type: 'terracesAck', count: 0 });
+      } catch (e) {}
     };
+
+    /** No-op kept for RN parent compat. Selected state is handled in RN. */
+    window.setSelected = function (_id) { /* no-op */ };
+
+    /** No-op kept for RN parent compat. Polygons removed. */
+    window.updatePolygons = function (_geojson) { /* no-op */ };
+
+    /** No-op kept for RN parent compat. Sun status updates removed. */
+    window.updateSunStatus = function (_updates) { /* no-op */ };
 
     document.addEventListener('DOMContentLoaded', function () {
       try { init(); postToRN({ type: 'htmlLoaded' }); }
