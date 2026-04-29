@@ -706,6 +706,101 @@ export default function MapScreen() {
     router.push({ pathname: '/terrace/[id]', params: { id: t.id, at_time: isPlanning ? buildAtTime() : '' } });
   };
 
+  // ── POI Mapbox -> terrasse DB matcher ──────────────────────────────────────
+  // Quand l'utilisateur tape sur une icône bar/resto/café native Mapbox, on
+  // cherche dans notre BDD scrapée la terrasse la plus proche (≤100m) avec
+  // un nom similaire. Si trouvée -> on ouvre sa fiche détaillée. Sinon on
+  // affiche un petit toast "Terrasse non référencée".
+  const [poiToast, setPoiToast] = useState<string | null>(null);
+  const poiToastTimerRef = useRef<any>(null);
+
+  // Haversine (mètres)
+  const haversineM = useCallback(
+    (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6_371_000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    },
+    [],
+  );
+
+  // Normalise un nom (lower, sans accents, sans ponctuation)
+  const normalizeName = useCallback((s: string | undefined | null): string => {
+    if (!s) return '';
+    return String(s)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // accents
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }, []);
+
+  // Score nom : 0 = pas de match, 1.0 = nom identique
+  const nameScore = useCallback(
+    (a: string, b: string): number => {
+      if (!a || !b) return 0;
+      if (a === b) return 1.0;
+      if (a.includes(b) || b.includes(a)) return 0.85;
+      // Match sur les 4 premiers caractères significatifs
+      const aw = a.split(' ').filter((w) => w.length >= 3);
+      const bw = b.split(' ').filter((w) => w.length >= 3);
+      const common = aw.filter((w) => bw.includes(w)).length;
+      const total = Math.max(aw.length, bw.length);
+      if (total === 0) return 0;
+      return common / total;
+    },
+    [],
+  );
+
+  const handlePoiPress = useCallback(
+    (poi: { name: string; maki: string; lat: number; lng: number }) => {
+      try {
+        // Pré-filtre géographique large (~250m de côté pour limiter la boucle)
+        const candidates = terraces.filter(
+          (t) =>
+            Math.abs(t.lat - poi.lat) < 0.0025 && Math.abs(t.lng - poi.lng) < 0.0035,
+        );
+
+        const poiName = normalizeName(poi.name);
+        let best: { t: Terrace; dist: number; score: number } | null = null;
+        for (const t of candidates) {
+          const dist = haversineM(t.lat, t.lng, poi.lat, poi.lng);
+          if (dist > 100) continue; // règle stricte : 100m max
+          const tName = normalizeName(t.name);
+          const ns = nameScore(poiName, tName);
+          // Score combiné : on veut petit dist + grand ns
+          // Penalty: 50m si ns < 0.5 (probable mauvais match)
+          const combinedScore = dist + (ns < 0.5 ? 50 : 0) - ns * 30;
+          if (!best || combinedScore < best.score) {
+            best = { t, dist, score: combinedScore };
+          }
+        }
+
+        if (best) {
+          console.log(
+            `[poi-match] ✅ "${poi.name}" -> "${best.t.name}" (${best.dist.toFixed(0)}m)`,
+          );
+          onCardPress(best.t);
+        } else {
+          console.log(`[poi-match] ❌ "${poi.name}" @ ${poi.lat.toFixed(5)},${poi.lng.toFixed(5)} non référencé`);
+          setPoiToast(
+            poi.name ? `${poi.name} : terrasse non référencée` : 'Terrasse non référencée',
+          );
+          if (poiToastTimerRef.current) clearTimeout(poiToastTimerRef.current);
+          poiToastTimerRef.current = setTimeout(() => setPoiToast(null), 2500);
+        }
+      } catch (e) {
+        console.warn('[poi-match] error:', e);
+      }
+    },
+    [terraces, haversineM, normalizeName, nameScore, onCardPress],
+  );
+
   const setLiveNow = () => {
     const n = new Date();
     setCurrentMinutes(n.getHours() * 60 + n.getMinutes());
@@ -726,11 +821,29 @@ export default function MapScreen() {
           focusCoords={focusCoords}
           forceDark={mapIsDark}
           onRegionChange={onMapRegionChange}
+          onPoiPress={handlePoiPress}
           shadowPolygons={shadowPolygons}
           enableLegacyShadows={ENABLE_LEGACY_SHADOWS}
           currentMinutes={currentMinutes}
         />
       </View>
+
+      {/* Toast "Terrasse non référencée" — affiché ~2.5s après tap sur un POI
+          Mapbox sans correspondance dans notre BDD. */}
+      {poiToast && (
+        <SafeAreaView
+          edges={['bottom']}
+          pointerEvents="none"
+          style={styles.poiToastWrap}
+        >
+          <View style={styles.poiToast}>
+            <Ionicons name="information-circle" size={16} color="#FFFFFF" />
+            <Text style={styles.poiToastText} numberOfLines={2}>
+              {poiToast}
+            </Text>
+          </View>
+        </SafeAreaView>
+      )}
 
       {/* Top overlay: SunSeekr-style compact header + slider+search row + filter pills */}
       <SafeAreaView style={styles.topOverlay} edges={['top']} pointerEvents="box-none">
@@ -1041,6 +1154,33 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+  },
+  // Toast POI Mapbox sans correspondance dans la BDD
+  poiToastWrap: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingBottom: 110, // au-dessus du handle de la bottom sheet (10%)
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  poiToast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(40,40,40,0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 22,
+    maxWidth: '88%',
+    gap: 8,
+  },
+  poiToastText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    flexShrink: 1,
   },
   topRow: {
     flexDirection: 'row',

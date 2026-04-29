@@ -51,6 +51,13 @@ type Props = {
     webViewReceived?: number;
     markersRendered?: number;
   }) => void;
+  /**
+   * Optional callback when the user taps a Mapbox built-in food_and_drink
+   * POI on the map. The parent decides what to do: typically search our
+   * scraped DB for the closest terrace with a similar name (≤100 m) and
+   * open its detail screen.
+   */
+  onPoiPress?: (poi: { name: string; maki: string; lat: number; lng: number }) => void;
 };
 
 export default function SunMap({
@@ -66,6 +73,7 @@ export default function SunMap({
   onSunUpdate,
   onMarkersUpdate,
   onRegionChange,
+  onPoiPress,
 }: Props) {
   const webRef = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -141,6 +149,21 @@ export default function SunMap({
           case 'mapError':
             console.warn('[soleia.web] map error:', data.msg);
             break;
+          case 'poiPress': {
+            try {
+              if (onPoiPress && typeof data.lat === 'number' && typeof data.lng === 'number') {
+                onPoiPress({
+                  name: String(data.name || ''),
+                  maki: String(data.maki || ''),
+                  lat: data.lat,
+                  lng: data.lng,
+                });
+              }
+            } catch (errPP) {
+              console.warn('[soleia.web] poiPress handler crashed:', errPP);
+            }
+            break;
+          }
           case 'regionChange':
             if (onRegionChange) {
               onRegionChange({
@@ -173,7 +196,7 @@ export default function SunMap({
         // non-JSON message - ignore
       }
     },
-    [terraces, onMarkerPress, onShadeIdle, onSunUpdate],
+    [terraces, onMarkerPress, onShadeIdle, onSunUpdate, onPoiPress, onMarkersUpdate, onRegionChange],
   );
 
   // Push terraces to the WebView whenever they change AND map is ready
