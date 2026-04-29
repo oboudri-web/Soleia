@@ -235,7 +235,7 @@ async def list_terraces(
     sun_status: Optional[str] = Query(None, description="Filtrer par statut: sunny, soon, shade"),
     min_rating: Optional[float] = Query(None, description="Note minimale Google"),
     at_time: Optional[str] = Query(None, description="ISO datetime ou HH:MM pour calcul soleil à ce moment"),
-    limit: int = Query(200, ge=1, le=2000, description="Maximum de résultats (max 2000)"),
+    limit: int = Query(200, ge=1, le=10000, description="Maximum de résultats (max 10000 pour zoom rue)"),
 ):
     """
     Liste les terrasses avec calcul solaire dynamique en temps réel.
