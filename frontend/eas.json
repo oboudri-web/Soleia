@@ -6,7 +6,7 @@
   "build": {
     "base": {
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://sunny-terraces.preview.emergentagent.com"
+        "EXPO_PUBLIC_BACKEND_URL": "https://soleia.onrender.com"
       },
       "node": "20.19.4"
     },
@@ -57,7 +57,7 @@
       },
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://api.soleia.app",
+        "EXPO_PUBLIC_BACKEND_URL": "https://soleia.onrender.com",
         "EXPO_PUBLIC_WEB_INSPECTOR": "false"
       }
     }
@@ -65,9 +65,9 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "REPLACE_WITH_YOUR_APPLE_ID@example.com",
-        "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "REPLACE_WITH_APPLE_TEAM_ID"
+        "appleId": "oboudri@gmail.com",
+        "ascAppId": "6763580455",
+        "appleTeamId": "X43HR6M3VQ"
       },
       "android": {
         "serviceAccountKeyPath": "./secrets/play-service-account.json",
