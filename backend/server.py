@@ -187,6 +187,39 @@ async def root():
     }
 
 
+@api_router.get("/health")
+async def health():
+    """
+    Lightweight health-check endpoint used by Render (and any uptime monitor)
+    to confirm the service is alive AND that the MongoDB connection works.
+
+    Render polls this endpoint every ~30s; any non-2xx response triggers an
+    automatic restart of the instance, so we keep the check very cheap:
+      - one MongoDB ping  (fails fast if Atlas connection is broken)
+      - returns process uptime + DB name
+    """
+    import time as _time
+    started = _time.monotonic()
+    db_ok = False
+    db_error: Optional[str] = None
+    try:
+        # Ping is the cheapest mongo operation — no I/O on a real collection.
+        await client.admin.command("ping")
+        db_ok = True
+    except Exception as e:  # pragma: no cover — exercised only in incidents
+        db_error = str(e)[:200]
+    elapsed_ms = round((_time.monotonic() - started) * 1000, 1)
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "db": {
+            "connected": db_ok,
+            "name": (db.name if db_ok else None),
+            "error": db_error,
+        },
+        "elapsed_ms": elapsed_ms,
+    }
+
+
 @api_router.get("/cities")
 async def list_cities():
     """Liste des villes supportées."""

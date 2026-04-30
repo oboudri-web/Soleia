@@ -1,0 +1,4 @@
+# Soleia FastAPI — fallback Procfile (utilisé par Heroku-like et certains
+# auto-déploiements génériques). Sur Render, c'est plutôt `startCommand`
+# dans render.yaml qui pilote le démarrage.
+web: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 2

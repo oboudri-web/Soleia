@@ -57,7 +57,8 @@
       },
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_WEB_INSPECTOR": "true"
+        "EXPO_PUBLIC_BACKEND_URL": "https://api.soleia.app",
+        "EXPO_PUBLIC_WEB_INSPECTOR": "false"
       }
     }
   },

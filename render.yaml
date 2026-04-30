@@ -1,0 +1,48 @@
+# Soleia — Render Infrastructure-as-Code
+#
+# Crée automatiquement le service web FastAPI dès que vous connectez ce
+# repo à Render via le bouton "New Blueprint". Cf. doc :
+# https://render.com/docs/blueprint-spec
+#
+# Pré-requis (à configurer une seule fois côté Render UI) :
+#   1. MongoDB Atlas cluster créé + IP whitelist 0.0.0.0/0 + user DB
+#   2. Récupérer la connection string mongodb+srv://...
+#   3. Sur Render, dans le service "soleia-api" :
+#      Settings -> Environment -> ajouter les secrets cités ci-dessous
+#   4. Settings -> Custom Domain -> ajouter `api.soleia.app`
+#      puis créer un CNAME api -> soleia-api.onrender.com côté DNS
+#
+# Migration data : voir backend/scripts/migrate_to_atlas.sh
+
+services:
+  - type: web
+    name: soleia-api
+    runtime: python
+    plan: starter             # 7 USD/mois — 512 Mo RAM, dort jamais
+    region: frankfurt         # le plus proche des users France (~30ms)
+    branch: main
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /api/health
+    autoDeploy: true          # redeploy auto à chaque push sur main
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.5"
+      # Secrets — à renseigner via Render UI (sync: false = ne stockera
+      # PAS la valeur dans ce fichier versionné).
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: soleia            # nom de la BDD côté Atlas
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: GOOGLE_PLACES_KEY
+        sync: false
+      - key: FOURSQUARE_KEY
+        sync: false
+      # CORS — l'app mobile native ne pose pas de header Origin donc
+      # "*" est sûr ici. Pour restreindre côté web preview Emergent on
+      # pourrait y mettre la liste explicite.
+      - key: CORS_ORIGINS
+        value: "*"
