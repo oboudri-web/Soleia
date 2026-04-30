@@ -778,7 +778,7 @@ export default function MapScreen() {
         let best: { t: Terrace; dist: number; score: number } | null = null;
         for (const t of candidates) {
           const dist = haversineM(t.lat, t.lng, poi.lat, poi.lng);
-          if (dist > 200) continue; // règle assouplie : 200m max
+          if (dist > 300) continue; // règle assouplie : 300m max
           const tName = normalizeName(t.name);
           const ns = nameScore(poiName, tName);
           // Score combiné : on veut petit dist + grand ns
@@ -790,17 +790,31 @@ export default function MapScreen() {
         }
 
         if (best) {
-          console.log(
-            `[poi-match] ✅ "${poi.name}" -> "${best.t.name}" (${best.dist.toFixed(0)}m)`,
-          );
+          console.log(`[poi-match] ✅ "${poi.name}" -> "${best.t.name}" (${best.dist.toFixed(0)}m)`);
           onCardPress(best.t);
         } else {
-          console.log(`[poi-match] ❌ "${poi.name}" @ ${poi.lat.toFixed(5)},${poi.lng.toFixed(5)} non référencé`);
-          setPoiToast(
-            poi.name ? `${poi.name} : terrasse non référencée` : 'Terrasse non référencée',
-          );
-          if (poiToastTimerRef.current) clearTimeout(poiToastTimerRef.current);
-          poiToastTimerRef.current = setTimeout(() => setPoiToast(null), 2500);
+          // Pas de match local — appel API avec les coords du POI
+          const delta = 0.003;
+          api.listTerraces({
+            lat_min: poi.lat - delta,
+            lat_max: poi.lat + delta,
+            lng_min: poi.lng - delta,
+            lng_max: poi.lng + delta,
+            limit: 5,
+          }).then((res) => {
+            if (res && res.terraces && res.terraces.length > 0) {
+              const closest = res.terraces[0];
+              onCardPress(closest);
+            } else {
+              setPoiToast(poi.name ? `${poi.name} : terrasse non référencée` : 'Terrasse non référencée');
+              if (poiToastTimerRef.current) clearTimeout(poiToastTimerRef.current);
+              poiToastTimerRef.current = setTimeout(() => setPoiToast(null), 2500);
+            }
+          }).catch(() => {
+            setPoiToast('Terrasse non trouvée');
+            if (poiToastTimerRef.current) clearTimeout(poiToastTimerRef.current);
+            poiToastTimerRef.current = setTimeout(() => setPoiToast(null), 2500);
+          });
         }
       } catch (e) {
         console.warn('[poi-match] error:', e);

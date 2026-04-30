@@ -373,7 +373,7 @@ export const MAP_HTML = `<!DOCTYPE html>
             !isFinite(west)  || !isFinite(east)  ||
             !isFinite(z)
           ) return;
-          if ((north - south) > 1 || (east - west) > 1) return; // bounds aberrantes
+          if ((north - south) > 3 || (east - west) > 3) return; // bounds aberrantes
           if (z < 8) return; // trop dezoomé, on n'envoie rien
           postToRN({
             type: 'regionChange',

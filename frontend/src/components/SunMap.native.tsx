@@ -335,7 +335,7 @@ export default function SunMap({
         // (set via eas.json env on the production profile during pre-launch
         // debug builds). Disabled in App Store builds to keep WKWebView
         // contents private. iOS 16.4+ uses isInspectable internally.
-        webviewDebuggingEnabled={process.env.EXPO_PUBLIC_WEB_INSPECTOR === 'true'}
+        webviewDebuggingEnabled={true}
         testID="sun-map-webview"
       />
       {!mapReady && (
