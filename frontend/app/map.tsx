@@ -483,12 +483,12 @@ export default function MapScreen() {
           return; // pas de refetch
         }
 
-        // Élargir le bbox de 50% pour créer un buffer de préchargement
+        // Pas de buffer — on fetch exactement la zone visible
         const buffered = {
-          lat_min: bbox.lat_min - visibleLatSpan * 0.25,
-          lat_max: bbox.lat_max + visibleLatSpan * 0.25,
-          lng_min: bbox.lng_min - visibleLngSpan * 0.25,
-          lng_max: bbox.lng_max + visibleLngSpan * 0.25,
+          lat_min: bbox.lat_min,
+          lat_max: bbox.lat_max,
+          lng_min: bbox.lng_min,
+          lng_max: bbox.lng_max,
         };
         fetchedBboxRef.current = buffered;
         setMapBbox(buffered);
@@ -603,10 +603,16 @@ export default function MapScreen() {
   }, [isLiveMode]);
 
   const filteredTerraces = useMemo(() => {
+    // 0) Si couverture nuageuse > 80%, override sun_status sunny -> shade
+    const cloudyOverride = weather && weather.cloud_cover != null && weather.cloud_cover > 80;
+    const terracesWithWeather = cloudyOverride
+      ? terraces.map((t) => t.sun_status === 'sunny' ? { ...t, sun_status: 'shade' as const } : t)
+      : terraces;
+
     // 1) Filter by status
     const base = statusFilter === 'all'
-      ? terraces
-      : terraces.filter((t) => t.sun_status === statusFilter);
+      ? terracesWithWeather
+      : terracesWithWeather.filter((t) => t.sun_status === statusFilter);
     if (!base.length) return base;
 
     // 2) Haversine distance (km)

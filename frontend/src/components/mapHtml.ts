@@ -319,8 +319,9 @@ export const MAP_HTML = `<!DOCTYPE html>
         // ───────────────────────────────────────────────────────────────────
         try {
           map.on('click', function (e) {
-            var feats = map.queryRenderedFeatures(e.point, {
-              filter: ['==', ['get', 'class'], 'food_and_drink'],
+            var feats = map.queryRenderedFeatures(e.point);
+            feats = feats.filter(function(f) {
+              return f.properties && f.properties.class === 'food_and_drink';
             });
             if (!feats || !feats.length) return;
             var f = feats[0];
