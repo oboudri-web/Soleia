@@ -343,7 +343,7 @@ export default function MapScreen() {
     if (!ref || typeof ref.lat !== 'number' || typeof ref.lng !== 'number') return;
     // Si l'utilisateur a déjà manipulé la carte (fetchedBboxRef set par onRegionChange),
     // on ne touche plus au bbox automatiquement.
-    if (fetchedBboxRef.current) return;
+    
     const DELTA = 0.05; // ~5.5 km côté Nord/Sud, ~3.5 km côté Est/Ouest à 47° lat
     const initial = {
       lat_min: ref.lat - DELTA,
@@ -763,14 +763,14 @@ export default function MapScreen() {
         // Pré-filtre géographique large (~250m de côté pour limiter la boucle)
         const candidates = terraces.filter(
           (t) =>
-            Math.abs(t.lat - poi.lat) < 0.0025 && Math.abs(t.lng - poi.lng) < 0.0035,
+            Math.abs(t.lat - poi.lat) < 0.005 && Math.abs(t.lng - poi.lng) < 0.007,
         );
 
         const poiName = normalizeName(poi.name);
         let best: { t: Terrace; dist: number; score: number } | null = null;
         for (const t of candidates) {
           const dist = haversineM(t.lat, t.lng, poi.lat, poi.lng);
-          if (dist > 100) continue; // règle stricte : 100m max
+          if (dist > 200) continue; // règle assouplie : 200m max
           const tName = normalizeName(t.name);
           const ns = nameScore(poiName, tName);
           // Score combiné : on veut petit dist + grand ns
