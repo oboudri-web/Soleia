@@ -341,8 +341,10 @@ export default function MapScreen() {
   useEffect(() => {
     const ref = userLocation || cityCoords;
     if (!ref || typeof ref.lat !== 'number' || typeof ref.lng !== 'number') return;
-    // Si l'utilisateur a déjà manipulé la carte (fetchedBboxRef set par onRegionChange),
-    // on ne touche plus au bbox automatiquement.
+    // Si l'utilisateur a déjà manipulé la carte ET la nouvelle position est dans la bbox,
+    // on ne réinitialise pas pour ne pas écraser la navigation manuelle.
+    const fetched = fetchedBboxRef.current;
+    if (fetched && ref.lat >= fetched.lat_min && ref.lat <= fetched.lat_max && ref.lng >= fetched.lng_min && ref.lng <= fetched.lng_max) return;
     
     const DELTA = 0.05; // ~5.5 km côté Nord/Sud, ~3.5 km côté Est/Ouest à 47° lat
     const initial = {
