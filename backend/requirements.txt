@@ -12,3 +12,6 @@ requests==2.32.0
 pydantic==2.8.0
 pytz==2024.1
 pysolar==0.11
+shapely==2.0.6
+jellyfish==1.0.3
+open-meteo-api==0.0.3
