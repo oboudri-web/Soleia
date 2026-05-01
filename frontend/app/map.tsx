@@ -98,6 +98,7 @@ export default function MapScreen() {
   const city = (params.city as string) || 'Nantes';
 
   const [terraces, setTerraces] = useState<Terrace[]>([]);
+  const lastSuccessfulFetch = useRef<number>(0);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -502,7 +503,7 @@ export default function MapScreen() {
         console.log('[map.loadData] ⏸  skipped — waiting for initial bbox');
         return;
       }
-      const MAX_BBOX_SPAN_DEG = 0.5; // ≈55 km côté max — sinon "Zoomez"
+      const MAX_BBOX_SPAN_DEG = 2.0; // ≈220 km côté max — sinon "Zoomez"
       let tooFar = false;
       const spanLat = mapBbox.lat_max - mapBbox.lat_min;
       const spanLng = mapBbox.lng_max - mapBbox.lng_min;
