@@ -472,26 +472,13 @@ export default function MapScreen() {
 
         // Si la zone visible est TOUJOURS dans le bbox déjà fetché, on ne refetch pas.
         // Le user peut zoomer/paner dans la zone sans provoquer de requête.
-        const fetched = fetchedBboxRef.current;
-        if (
-          fetched &&
-          bbox.lat_min >= fetched.lat_min &&
-          bbox.lat_max <= fetched.lat_max &&
-          bbox.lng_min >= fetched.lng_min &&
-          bbox.lng_max <= fetched.lng_max
-        ) {
-          return; // pas de refetch
-        }
-
-        // Pas de buffer — on fetch exactement la zone visible
-        const buffered = {
+        // Toujours refetch — pas de cache bbox
+        setMapBbox({
           lat_min: bbox.lat_min,
           lat_max: bbox.lat_max,
           lng_min: bbox.lng_min,
           lng_max: bbox.lng_max,
-        };
-        fetchedBboxRef.current = buffered;
-        setMapBbox(buffered);
+        });
       }, 600);
     },
     [],
@@ -774,18 +761,13 @@ export default function MapScreen() {
             Math.abs(t.lat - poi.lat) < 0.005 && Math.abs(t.lng - poi.lng) < 0.007,
         );
 
-        const poiName = normalizeName(poi.name);
+        // Matching uniquement par distance — le plus proche gagne
         let best: { t: Terrace; dist: number; score: number } | null = null;
         for (const t of candidates) {
           const dist = haversineM(t.lat, t.lng, poi.lat, poi.lng);
-          if (dist > 300) continue; // règle assouplie : 300m max
-          const tName = normalizeName(t.name);
-          const ns = nameScore(poiName, tName);
-          // Score combiné : on veut petit dist + grand ns
-          // Penalty: 50m si ns < 0.5 (probable mauvais match)
-          const combinedScore = dist + (ns < 0.5 ? 50 : 0) - ns * 30;
-          if (!best || combinedScore < best.score) {
-            best = { t, dist, score: combinedScore };
+          if (dist > 100) continue; // 100m max
+          if (!best || dist < best.dist) {
+            best = { t, dist, score: dist };
           }
         }
 
